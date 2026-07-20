@@ -7,20 +7,19 @@
 #define SDSPI_HOST SPI2_HOST
 #define LCD_HOST   SPI3_HOST
 
-// ESP32-S3-Touch-LCD-3.49 V2 pinout (PCB Rev2.0)
-// LCD QSPI (AXS15231B)
-// Note: LCD_RST and TP_INT are routed through the TCA9554 I/O expander (EXIO).
-//       For this minimal LVGL v9 port we leave them uncontrolled (-1) and rely
-//       on the panel driver's soft reset / polling touch read.
+// ESP32-S3-Touch-LCD-3.49 pinout (verified on hardware against the vendor
+// factory program: LCD data 9-14, RST=21 direct, backlight=GPIO8 PWM).
+// NOTE: the earlier "V2" values (BK=42, RST=-1 via TCA9554 EXIO5) left the
+// backlight off -> black screen on this board.
 #define EXAMPLE_PIN_NUM_LCD_CS        (GPIO_NUM_9)
 #define EXAMPLE_PIN_NUM_LCD_PCLK      (GPIO_NUM_10)
 #define EXAMPLE_PIN_NUM_LCD_DATA0     (GPIO_NUM_11)
 #define EXAMPLE_PIN_NUM_LCD_DATA1     (GPIO_NUM_12)
 #define EXAMPLE_PIN_NUM_LCD_DATA2     (GPIO_NUM_13)
 #define EXAMPLE_PIN_NUM_LCD_DATA3     (GPIO_NUM_14)
-#define EXAMPLE_PIN_NUM_LCD_RST       (-1)           /* EXIO5 on TCA9554 */
-#define EXAMPLE_PIN_NUM_LCD_TE        (GPIO_NUM_21)
-#define EXAMPLE_PIN_NUM_BK_LIGHT      (GPIO_NUM_42)  /* direct PWM backlight */
+#define EXAMPLE_PIN_NUM_LCD_RST       (GPIO_NUM_21)  /* direct reset, as in factory program */
+#define EXAMPLE_PIN_NUM_LCD_TE        (-1)           /* not used */
+#define EXAMPLE_PIN_NUM_BK_LIGHT      (GPIO_NUM_8)   /* PWM backlight, as in factory program */
 
 // Display parameters
 #define EXAMPLE_LCD_H_RES             172
@@ -31,7 +30,10 @@
 // Rotation (software implemented)
 #define USER_DISP_ROT_90              1
 #define USER_DISP_ROT_NONO            0
-#define Rotated                       USER_DISP_ROT_NONO
+/* ROT_90 path is always compiled so orientation can switch at runtime via
+   lv_display_set_rotation(); boot stays at rotation 0 (portrait) and the
+   IMU orientation task rotates on demand. */
+#define Rotated                       USER_DISP_ROT_90
 
 // Backlight test enable
 #define Backlight_Testing             0

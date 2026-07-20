@@ -11,6 +11,18 @@ static const char *TAG = "USB_SS";
 static uint16_t *s_fb = NULL;
 static uint16_t s_w = 172, s_h = 640;
 
+static usb_ss_lock_cb s_lock_cb = NULL;
+static usb_ss_unlock_cb s_unlock_cb = NULL;
+static usb_ss_refresh_cb s_refresh_cb = NULL;
+
+void usb_screenshot_set_hooks(usb_ss_lock_cb lock, usb_ss_unlock_cb unlock,
+                              usb_ss_refresh_cb refresh)
+{
+    s_lock_cb = lock;
+    s_unlock_cb = unlock;
+    s_refresh_cb = refresh;
+}
+
 void usb_screenshot_register_fb(uint16_t *fb, uint16_t w, uint16_t h)
 {
     s_fb = fb;
@@ -39,10 +51,18 @@ void usb_screenshot_send(void)
         return;
     }
 
+    /* Grab a consistent frame: hold the LVGL mutex and force a refresh so
+       the buffer contains one complete, already byte-swapped generation
+       (no tearing / mixed endianness). */
+    bool locked = s_lock_cb ? s_lock_cb(-1) : false;
+    if (s_refresh_cb) {
+        s_refresh_cb();
+    }
+
     uint8_t *p = buf;
 
     /* Frame header */
-    memcpy(p, "FB_START\n", 8);
+    memcpy(p, "FB_START", 8);
     p += 8;
 
     /* Metadata (little-endian) */
@@ -53,12 +73,16 @@ void usb_screenshot_send(void)
     *(uint32_t*)p = pix_size;
     p += 4;
 
-    /* Pixel data (direct copy, PC handles Y flip) */
+    /* Pixel data (direct copy, PC handles byte order) */
     memcpy(p, s_fb, pix_size);
     p += pix_size;
 
     /* Frame tail */
-    memcpy(p, "FB_END\n", 6);
+    memcpy(p, "FB_END", 6);
+
+    if (locked && s_unlock_cb) {
+        s_unlock_cb();
+    }
 
     /* Send via USB-Serial-JTAG (native USB, /dev/tty.usbmodem*).
        The USJ TX ring buffer is tiny (256 bytes with the default/console

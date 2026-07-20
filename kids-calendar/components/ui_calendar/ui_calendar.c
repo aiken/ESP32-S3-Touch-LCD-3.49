@@ -8,10 +8,18 @@
 
 static const char *TAG = "UI";
 
-#define SCREEN_W 172
-#define SCREEN_H 640
-#define STATUS_H 56
-#define CONTENT_H (SCREEN_H - STATUS_H)
+#define SCREEN_W_PORTRAIT   172
+#define SCREEN_H_PORTRAIT   640
+#define SCREEN_W_LANDSCAPE  640
+#define SCREEN_H_LANDSCAPE  172
+#define STATUS_H_PORTRAIT   56
+#define STATUS_H_LANDSCAPE  36
+
+static bool s_landscape = false;
+static int s_screen_w = SCREEN_W_PORTRAIT;
+static int s_screen_h = SCREEN_H_PORTRAIT;
+static int s_status_h = STATUS_H_PORTRAIT;
+#define CONTENT_H (s_screen_h - s_status_h)
 
 static lv_obj_t *s_root = NULL;
 static lv_obj_t *s_status_bar = NULL;
@@ -32,6 +40,15 @@ static int s_current_year = 2026;
 static int s_current_month = 7;
 static int s_today_day = 20;
 
+/* Cached content so ui_set_orientation() can restore after a rebuild */
+static const course_t *s_last_courses = NULL;
+static int s_last_course_count = 0;
+static char s_last_date[16] = "--/--";
+static char s_last_weekday[8] = "--";
+static char s_last_time[16] = "--:--";
+static bool s_last_wifi = false;
+static int s_last_batt_pct = -1;
+
 static const char *s_weekday_names[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
 static const char *s_month_names[] = {"1月", "2月", "3月", "4月", "5月", "6月",
                                       "7月", "8月", "9月", "10月", "11月", "12月"};
@@ -48,7 +65,7 @@ static void ui_on_course_card_click(lv_event_t *e);
 
 esp_err_t ui_init(void)
 {
-    ESP_LOGI(TAG, "Initializing UI (%dx%d)", SCREEN_W, SCREEN_H);
+    ESP_LOGI(TAG, "Initializing UI (%dx%d)", s_screen_w, s_screen_h);
 
     s_root = lv_screen_active();
     lv_obj_set_style_bg_color(s_root, lv_color_hex(0x101010), 0);
@@ -72,7 +89,7 @@ esp_err_t ui_init(void)
 static void ui_create_status_bar(void)
 {
     s_status_bar = lv_obj_create(s_root);
-    lv_obj_set_size(s_status_bar, SCREEN_W, STATUS_H);
+    lv_obj_set_size(s_status_bar, s_screen_w, s_status_h);
     lv_obj_set_pos(s_status_bar, 0, 0);
     ui_style_status_bar(s_status_bar);
     lv_obj_add_event_cb(s_status_bar, ui_on_status_bar_click, LV_EVENT_CLICKED, NULL);
@@ -80,43 +97,55 @@ static void ui_create_status_bar(void)
     s_date_label = lv_label_create(s_status_bar);
     ui_style_label(s_date_label, font_normal, lv_color_white());
     lv_label_set_text(s_date_label, "--/--");
-    lv_obj_align(s_date_label, LV_ALIGN_LEFT_MID, 4, -4);
 
     s_weekday_label = lv_label_create(s_status_bar);
     ui_style_label(s_weekday_label, font_normal, lv_color_hex(0x4ECDC4));
     lv_label_set_text(s_weekday_label, "--");
-    lv_obj_align(s_weekday_label, LV_ALIGN_CENTER, 0, -4);
 
     s_time_label = lv_label_create(s_status_bar);
     ui_style_label(s_time_label, font_time, lv_color_white());
     lv_label_set_text(s_time_label, "--:--");
-    lv_obj_align(s_time_label, LV_ALIGN_RIGHT_MID, -4, -4);
 
     s_wifi_label = lv_label_create(s_status_bar);
     ui_style_label(s_wifi_label, font_small, lv_color_hex(0x888888));
     lv_label_set_text(s_wifi_label, "WiFi");
-    lv_obj_align(s_wifi_label, LV_ALIGN_BOTTOM_RIGHT, -4, 0);
 
     /* Battery: icon (Montserrat has the LV_SYMBOL_BATTERY_* glyphs) + percent */
     s_batt_icon_label = lv_label_create(s_status_bar);
     lv_obj_set_style_text_font(s_batt_icon_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(s_batt_icon_label, lv_color_hex(0xAAAAAA), 0);
     lv_label_set_text(s_batt_icon_label, LV_SYMBOL_BATTERY_EMPTY);
-    lv_obj_align(s_batt_icon_label, LV_ALIGN_BOTTOM_LEFT, 4, 0);
 
     s_batt_pct_label = lv_label_create(s_status_bar);
     ui_style_label(s_batt_pct_label, font_small, lv_color_hex(0xAAAAAA));
     lv_label_set_text(s_batt_pct_label, "--%");
-    lv_obj_align_to(s_batt_pct_label, s_batt_icon_label, LV_ALIGN_OUT_RIGHT_MID, 2, 0);
+
+    if (!s_landscape) {
+        /* Portrait (172x640): two rows */
+        lv_obj_align(s_date_label, LV_ALIGN_LEFT_MID, 4, -4);
+        lv_obj_align(s_weekday_label, LV_ALIGN_CENTER, 0, -4);
+        lv_obj_align(s_time_label, LV_ALIGN_RIGHT_MID, -4, -4);
+        lv_obj_align(s_wifi_label, LV_ALIGN_BOTTOM_RIGHT, -4, 0);
+        lv_obj_align(s_batt_icon_label, LV_ALIGN_BOTTOM_LEFT, 4, 0);
+        lv_obj_align_to(s_batt_pct_label, s_batt_icon_label, LV_ALIGN_OUT_RIGHT_MID, 2, 0);
+    } else {
+        /* Landscape (640x172): single row, battery + wifi left of the clock */
+        lv_obj_align(s_date_label, LV_ALIGN_LEFT_MID, 4, 0);
+        lv_obj_align_to(s_weekday_label, s_date_label, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
+        lv_obj_align(s_time_label, LV_ALIGN_RIGHT_MID, -4, 0);
+        lv_obj_align_to(s_wifi_label, s_time_label, LV_ALIGN_OUT_LEFT_MID, -10, 0);
+        lv_obj_align_to(s_batt_pct_label, s_wifi_label, LV_ALIGN_OUT_LEFT_MID, -6, 0);
+        lv_obj_align_to(s_batt_icon_label, s_batt_pct_label, LV_ALIGN_OUT_LEFT_MID, -2, 0);
+    }
 }
 
 static void ui_create_timeline(void)
 {
     s_timeline = lv_obj_create(s_root);
-    lv_obj_set_size(s_timeline, SCREEN_W, CONTENT_H);
-    lv_obj_set_pos(s_timeline, 0, STATUS_H);
+    lv_obj_set_size(s_timeline, s_screen_w, CONTENT_H);
+    lv_obj_set_pos(s_timeline, 0, s_status_h);
     ui_style_scroll_container(s_timeline);
-    lv_obj_set_flex_flow(s_timeline, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_flow(s_timeline, s_landscape ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(s_timeline, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
     lv_obj_add_flag(s_timeline, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_event_cb(s_timeline, ui_on_content_gesture, LV_EVENT_GESTURE, NULL);
@@ -132,8 +161,8 @@ static void ui_create_timeline(void)
 static void ui_create_month_view(void)
 {
     s_month_view = lv_obj_create(s_root);
-    lv_obj_set_size(s_month_view, SCREEN_W, CONTENT_H);
-    lv_obj_set_pos(s_month_view, 0, STATUS_H);
+    lv_obj_set_size(s_month_view, s_screen_w, CONTENT_H);
+    lv_obj_set_pos(s_month_view, 0, s_status_h);
     ui_style_scroll_container(s_month_view);
     lv_obj_set_flex_flow(s_month_view, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(s_month_view, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
@@ -178,18 +207,60 @@ static void ui_create_reminder_popup(void)
     lv_timer_pause(s_reminder_timer);
 }
 
+void ui_set_orientation(bool landscape)
+{
+    if (landscape == s_landscape || s_root == NULL) {
+        return;
+    }
+    s_landscape = landscape;
+    s_screen_w = landscape ? SCREEN_W_LANDSCAPE : SCREEN_W_PORTRAIT;
+    s_screen_h = landscape ? SCREEN_H_LANDSCAPE : SCREEN_H_PORTRAIT;
+    s_status_h = landscape ? STATUS_H_LANDSCAPE : STATUS_H_PORTRAIT;
+    s_view_is_timeline = true; /* month view is portrait-only */
+
+    /* Delete top-level containers (children go with them) and rebuild */
+    if (s_reminder_timer) { lv_timer_del(s_reminder_timer); s_reminder_timer = NULL; }
+    if (s_status_bar)     { lv_obj_del(s_status_bar);     s_status_bar = NULL; }
+    if (s_timeline)       { lv_obj_del(s_timeline);       s_timeline = NULL; }
+    if (s_month_view)     { lv_obj_del(s_month_view);     s_month_view = NULL; }
+    if (s_reminder_popup) { lv_obj_del(s_reminder_popup); s_reminder_popup = NULL; }
+    s_date_label = s_weekday_label = s_time_label = s_wifi_label = NULL;
+    s_batt_icon_label = s_batt_pct_label = NULL;
+
+    ui_create_status_bar();
+    ui_create_timeline();
+    ui_create_month_view();
+    ui_create_reminder_popup();
+
+    lv_obj_clear_flag(s_timeline, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_month_view, LV_OBJ_FLAG_HIDDEN);
+
+    /* Restore cached content */
+    ui_update_statusbar(s_last_date, s_last_weekday, s_last_time, s_last_wifi);
+    ui_update_battery(s_last_batt_pct);
+    ui_show_course_timeline(s_last_courses, s_last_course_count);
+    ui_show_month_calendar(s_current_year, s_current_month, s_today_day);
+
+    ESP_LOGI(TAG, "UI rebuilt: %s (%dx%d)", landscape ? "landscape" : "portrait",
+             s_screen_w, s_screen_h);
+}
+
 void ui_update_statusbar(const char *date, const char *weekday,
                          const char *time_str, bool wifi_ok)
 {
     if (date) {
         lv_label_set_text(s_date_label, date);
+        strncpy(s_last_date, date, sizeof(s_last_date) - 1);
     }
     if (weekday) {
         lv_label_set_text(s_weekday_label, weekday);
+        strncpy(s_last_weekday, weekday, sizeof(s_last_weekday) - 1);
     }
     if (time_str) {
         lv_label_set_text(s_time_label, time_str);
+        strncpy(s_last_time, time_str, sizeof(s_last_time) - 1);
     }
+    s_last_wifi = wifi_ok;
 
     if (s_wifi_label) {
         lv_label_set_text(s_wifi_label, wifi_ok ? "WiFi" : "---");
@@ -200,6 +271,7 @@ void ui_update_statusbar(const char *date, const char *weekday,
 
 void ui_update_battery(int pct)
 {
+    s_last_batt_pct = pct;
     if (!s_batt_icon_label || !s_batt_pct_label) {
         return;
     }
@@ -232,6 +304,10 @@ void ui_show_course_timeline(const course_t *courses, int count)
         return;
     }
 
+    /* Cache for orientation rebuilds */
+    s_last_courses = courses;
+    s_last_course_count = count;
+
     /* Remove existing cards */
     uint32_t child_cnt = lv_obj_get_child_cnt(s_timeline);
     for (int i = child_cnt - 1; i >= 0; i--) {
@@ -248,23 +324,26 @@ void ui_show_course_timeline(const course_t *courses, int count)
         return;
     }
 
+    const int card_w = s_landscape ? 150 : 164;
+    const int card_h = s_landscape ? (CONTENT_H - 16) : 86;
+
     for (int i = 0; i < count; i++) {
         const course_t *c = &courses[i];
         lv_color_t color = ui_color_from_hex(c->color);
 
         lv_obj_t *card = lv_obj_create(s_timeline);
-        lv_obj_set_size(card, 164, 86);
+        lv_obj_set_size(card, card_w, card_h);
         ui_style_card(card);
         lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW);
         lv_obj_add_event_cb(card, ui_on_course_card_click, LV_EVENT_CLICKED, (void *)c);
 
         lv_obj_t *bar = lv_obj_create(card);
-        lv_obj_set_size(bar, 6, 74);
+        lv_obj_set_size(bar, 6, card_h - 12);
         ui_style_card_bar(bar, color);
         lv_obj_set_style_margin_right(bar, 6, 0);
 
         lv_obj_t *info = lv_obj_create(card);
-        lv_obj_set_size(info, 140, 74);
+        lv_obj_set_size(info, card_w - 24, card_h - 12);
         lv_obj_set_style_bg_opa(info, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(info, 0, 0);
         lv_obj_set_style_pad_all(info, 0, 0);
@@ -392,6 +471,9 @@ void ui_hide_reminder(void)
 
 void ui_toggle_view(void)
 {
+    if (s_landscape) {
+        return; /* month view is portrait-only */
+    }
     if (s_view_is_timeline) {
         lv_obj_add_flag(s_timeline, LV_OBJ_FLAG_HIDDEN);
         lv_obj_clear_flag(s_month_view, LV_OBJ_FLAG_HIDDEN);

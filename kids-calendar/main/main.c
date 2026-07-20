@@ -23,6 +23,8 @@
 #include "pcf85063.h"
 #include "usb_screenshot.h"
 #include "battery_bsp.h"
+#include "qmi8658_imu.h"
+#include <math.h>
 
 /* Demo courses for hardware GUI validation - use only characters in built-in font */
 static const course_t s_demo_courses[] = {
@@ -80,6 +82,7 @@ static const char *TAG = "example";
 static SemaphoreHandle_t lvgl_mux = NULL;   
 static SemaphoreHandle_t flush_done_semaphore = NULL; 
 uint8_t *lvgl_dest = NULL;
+static lv_display_t *s_disp = NULL;
 
 static uint16_t *trans_buf_1;
 
@@ -104,6 +107,59 @@ uint16_t *get_frame_buffer(uint16_t *width, uint16_t *height)
     *width = s_fb_width;
     *height = s_fb_height;
     return (uint16_t *)s_frame_buffer;
+}
+
+static void example_backlight_loop_task(void *arg);
+
+static bool example_lvgl_lock(int timeout_ms);
+static void example_lvgl_unlock(void);
+
+/* Force a synchronous LVGL refresh (used by the screenshot hook) */
+static void screenshot_refresh(void)
+{
+    lv_refr_now(NULL);
+}
+
+/* Poll the accelerometer and rotate the UI when the device orientation
+   changes. |ax| > |ay| means the long edge is horizontal (landscape).
+   Debounce: switch only after 5 consecutive readings of the new direction. */
+#define ORIENT_DEBOUNCE_COUNT 5
+
+static void imu_orientation_task(void *arg)
+{
+    bool landscape = false;      /* currently applied orientation */
+    bool candidate = false;
+    int stable = 0;
+
+    for (;;) {
+        float x = 0, y = 0, z = 0;
+        if (imu_read_accel(&x, &y, &z) == ESP_OK) {
+            bool now_landscape = fabsf(x) > fabsf(y);
+            if (now_landscape == candidate) {
+                if (stable < ORIENT_DEBOUNCE_COUNT) stable++;
+            } else {
+                candidate = now_landscape;
+                stable = 1;
+            }
+
+            if (stable >= ORIENT_DEBOUNCE_COUNT && candidate != landscape) {
+                landscape = candidate;
+                ESP_LOGI(TAG, "Orientation -> %s (x=%.2f y=%.2f z=%.2f)",
+                         landscape ? "landscape" : "portrait", x, y, z);
+                if (example_lvgl_lock(-1)) {
+                    lv_display_set_rotation(s_disp, landscape ? LV_DISPLAY_ROTATION_90
+                                                              : LV_DISPLAY_ROTATION_0);
+                    ui_set_orientation(landscape);
+                    /* Screenshot dims follow the logical resolution */
+                    usb_screenshot_register_fb((uint16_t *)s_frame_buffer,
+                                               landscape ? EXAMPLE_LCD_V_RES : EXAMPLE_LCD_H_RES,
+                                               landscape ? EXAMPLE_LCD_H_RES : EXAMPLE_LCD_V_RES);
+                    example_lvgl_unlock();
+                }
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(200));
+    }
 }
 
 static void example_backlight_loop_task(void *arg);
@@ -156,7 +212,9 @@ static void example_lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, u
     int offsetx2 = EXAMPLE_LCD_H_RES;
     int offsety2 = offgap;
 
-    uint16_t *map = (uint16_t *)lvgl_dest;
+    /* rotation==0 renders straight from color_p; rotated frames live in lvgl_dest */
+    uint16_t *map = (rotation != LV_DISPLAY_ROTATION_0) ? (uint16_t *)lvgl_dest
+                                                        : (uint16_t *)color_p;
     xSemaphoreGive(flush_done_semaphore);
     for(int i = 0; i<flush_coun; i++)
     {
@@ -207,17 +265,22 @@ static void TouchInputReadCallback(lv_indev_t * indev, lv_indev_data_t *indevDat
     if (buff[1]>0 && buff[1]<5)
     {
         indevData->state = LV_INDEV_STATE_PRESSED;
-#if (Rotated == USER_DISP_ROT_90)
-        if(pointX > EXAMPLE_LCD_H_RES) pointX = EXAMPLE_LCD_H_RES;
-        if(pointY > EXAMPLE_LCD_V_RES) pointY = EXAMPLE_LCD_V_RES;
-        indevData->point.x = (EXAMPLE_LCD_H_RES - pointX);
-        indevData->point.y = (EXAMPLE_LCD_V_RES - pointY);
-#else
-        if(pointX > EXAMPLE_LCD_V_RES) pointX = EXAMPLE_LCD_V_RES;
-        if(pointY > EXAMPLE_LCD_H_RES) pointY = EXAMPLE_LCD_H_RES;
-        indevData->point.x = pointY;
-        indevData->point.y = (EXAMPLE_LCD_V_RES-pointX);
-#endif
+        /* Map raw panel coordinates according to the CURRENT display rotation */
+        lv_display_rotation_t rot = lv_display_get_rotation(lv_indev_get_display(indev));
+        if (rot == LV_DISPLAY_ROTATION_90 || rot == LV_DISPLAY_ROTATION_270)
+        {
+            if(pointX > EXAMPLE_LCD_H_RES) pointX = EXAMPLE_LCD_H_RES;
+            if(pointY > EXAMPLE_LCD_V_RES) pointY = EXAMPLE_LCD_V_RES;
+            indevData->point.x = (EXAMPLE_LCD_H_RES - pointX);
+            indevData->point.y = (EXAMPLE_LCD_V_RES - pointY);
+        }
+        else
+        {
+            if(pointX > EXAMPLE_LCD_V_RES) pointX = EXAMPLE_LCD_V_RES;
+            if(pointY > EXAMPLE_LCD_H_RES) pointY = EXAMPLE_LCD_H_RES;
+            indevData->point.x = pointY;
+            indevData->point.y = (EXAMPLE_LCD_V_RES-pointX);
+        }
     }
     else 
     {
@@ -270,7 +333,10 @@ static void example_lvgl_port_task(void *arg)
 
 void app_main(void)
 {
-    lcd_bl_pwm_bsp_init(LCD_PWM_MODE_255);
+    /* Backlight: leave at board default (on). The factory demo does not drive
+       the backlight pin at all; the PWM init (GPIO8, LEDC 50kHz) is suspected
+       of turning it off on this board. Re-enable lcd_bl_pwm_bsp_init() only
+       after verifying polarity on hardware. */
     flush_done_semaphore = xSemaphoreCreateBinary();
     assert(flush_done_semaphore);
     touch_i2c_master_Init();
@@ -359,9 +425,12 @@ void app_main(void)
     s_fb_width = EXAMPLE_LCD_H_RES;
     s_fb_height = EXAMPLE_LCD_V_RES;
 #if (Rotated == USER_DISP_ROT_90)
+    /* Rotation buffer for runtime orientation switching; boot stays portrait,
+       the IMU task calls lv_display_set_rotation() on demand. */
     lvgl_dest = (uint8_t *)heap_caps_malloc(BUFF_SIZE, MALLOC_CAP_SPIRAM); //旋转buf
-    lv_display_set_rotation(disp, LV_DISPLAY_ROTATION_90);
+    assert(lvgl_dest);
 #endif
+    s_disp = disp;
 
     /*port indev*/
     lv_indev_t *touch_indev = NULL;
@@ -392,6 +461,7 @@ void app_main(void)
 
     /* Register frame buffer for USB screenshot debugging */
     usb_screenshot_register_fb((uint16_t *)s_frame_buffer, s_fb_width, s_fb_height);
+    usb_screenshot_set_hooks(example_lvgl_lock, example_lvgl_unlock, screenshot_refresh);
 
     /* On-demand screenshot: send 'screenshot' over USB serial to trigger */
     usb_screenshot_start_cmd();
@@ -402,13 +472,20 @@ void app_main(void)
     /* Battery voltage measurement (TCA9554 + ADC on the RTC I2C bus) */
     ESP_ERROR_CHECK_WITHOUT_ABORT(battery_bsp_init());
 
+    /* IMU for auto-rotation (same I2C bus as RTC) */
+    if (imu_init() == ESP_OK) {
+        xTaskCreatePinnedToCore(imu_orientation_task, "imu_orient", 4096, NULL, 3, NULL, 0);
+    } else {
+        ESP_LOGW(TAG, "IMU not found, auto-rotation disabled");
+    }
+
     /* Set RTC to current time on first boot (temporary: fixed time, will sync via NTP later) */
     struct tm default_time = {
         .tm_year = 126, /* 2026 - 1900 */
         .tm_mon = 6,    /* July (0-based) */
         .tm_mday = 20,
         .tm_hour = 12,
-        .tm_min = 0,
+        .tm_min = 30,
         .tm_sec = 0,
         .tm_wday = 1,  /* Monday */
     };

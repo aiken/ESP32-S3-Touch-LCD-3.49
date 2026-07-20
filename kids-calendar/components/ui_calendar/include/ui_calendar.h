@@ -23,6 +23,7 @@ esp_err_t ui_init(void);
 void ui_update_statusbar(const char *date, const char *weekday,
                          const char *time_str, bool wifi_ok);
 void ui_update_battery(int pct);
+void ui_set_orientation(bool landscape);
 void ui_show_course_timeline(const course_t *courses, int count);
 void ui_show_month_calendar(int year, int month, int today_day);
 void ui_show_reminder(const char *course_name, const char *start_time);

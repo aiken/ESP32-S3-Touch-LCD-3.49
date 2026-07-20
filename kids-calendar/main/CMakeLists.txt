@@ -8,6 +8,7 @@ idf_component_register(
         pcf85063_rtc
         usb_screenshot
         battery_bsp
+        qmi8658_imu
         driver
         esp_lcd
         espressif__esp_lcd_axs15231b
