@@ -1,0 +1,51 @@
+menu "Calendar App Configuration"
+
+config WIFI_SSID
+    string "Wi-Fi SSID"
+    default "YOUR_WIFI_SSID"
+    help
+        Your Wi-Fi network name
+
+config WIFI_PASSWORD
+    string "Wi-Fi Password"
+    default "YOUR_WIFI_PASSWORD"
+    help
+        Your Wi-Fi password
+
+config API_USE_HTTPS
+    bool "Use HTTPS (Cloudflare Tunnel)"
+    default y
+    help
+        Use HTTPS for external access, HTTP for local network
+
+config API_HOST
+    string "API Host"
+    default "calendar.yourdomain.com"
+    help
+        API server hostname (HTTPS) or IP (HTTP)
+
+config API_PORT
+    int "API Port"
+    default 443
+    help
+        API server port (443 for HTTPS, 3000 for HTTP)
+
+config API_PATH
+    string "API Base Path"
+    default "/api"
+    help
+        API base path
+
+config TIMEZONE_OFFSET
+    int "Timezone Offset (hours)"
+    default 8
+    help
+        Timezone offset from UTC (Beijing = 8)
+
+config NTP_SERVER
+    string "NTP Server"
+    default "pool.ntp.org"
+    help
+        NTP server for time synchronization
+
+endmenu

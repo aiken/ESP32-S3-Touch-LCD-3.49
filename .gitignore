@@ -1,0 +1,5 @@
+.DS_Store
+.codegraph/
+**/build/
+**/managed_components/
+kimi-export-*.md
