@@ -60,12 +60,76 @@ static const char *s_weekday_names[] = {"周日", "周一", "周二", "周三", 
 static const char *s_month_names[] = {"1月", "2月", "3月", "4月", "5月", "6月",
                                       "7月", "8月", "9月", "10月", "11月", "12月"};
 
-/* Forward declarations */
+/* ---------------- course detail popup ---------------- */
+
+static lv_obj_t *s_detail_popup = NULL;
+static lv_obj_t *s_detail_name = NULL;
+static lv_obj_t *s_detail_time = NULL;
+static lv_obj_t *s_detail_meta = NULL;
+static lv_obj_t *s_detail_remind = NULL;
+
+static void ui_on_detail_close(lv_event_t *e)
+{
+    (void)e;
+    if (s_detail_popup) {
+        lv_obj_add_flag(s_detail_popup, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void ui_create_detail_popup(void)
+{
+    s_detail_popup = lv_obj_create(s_root);
+    lv_obj_set_size(s_detail_popup, s_landscape ? 320 : (s_screen_w - 16),
+                    s_landscape ? 140 : 220);
+    lv_obj_center(s_detail_popup);
+    lv_obj_set_style_bg_color(s_detail_popup, lv_color_hex(0x1A1A2E), 0);
+    lv_obj_set_style_bg_opa(s_detail_popup, LV_OPA_COVER, 0);
+    lv_obj_set_style_radius(s_detail_popup, 12, 0);
+    lv_obj_set_style_border_width(s_detail_popup, 2, 0);
+    lv_obj_set_style_pad_all(s_detail_popup, 12, 0);
+    lv_obj_set_flex_flow(s_detail_popup, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(s_detail_popup, 6, 0);
+    lv_obj_add_event_cb(s_detail_popup, ui_on_detail_close, LV_EVENT_CLICKED, NULL);
+
+    s_detail_name = lv_label_create(s_detail_popup);
+    ui_style_label(s_detail_name, font_large, lv_color_white());
+
+    s_detail_time = lv_label_create(s_detail_popup);
+    ui_style_label(s_detail_time, font_normal, lv_color_hex(0x4ECDC4));
+
+    s_detail_meta = lv_label_create(s_detail_popup);
+    ui_style_label(s_detail_meta, font_small, lv_color_hex(0x9AA0B4));
+
+    s_detail_remind = lv_label_create(s_detail_popup);
+    ui_style_label(s_detail_remind, font_small, lv_color_hex(0xFFE66D));
+
+    lv_obj_t *hint = lv_label_create(s_detail_popup);
+    ui_style_label(hint, font_small, lv_color_hex(0x555566));
+    lv_label_set_text(hint, "点击关闭");
+
+    lv_obj_add_flag(s_detail_popup, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void ui_show_course_detail(const course_t *c)
+{
+    if (!c || !s_detail_popup) {
+        return;
+    }
+    lv_label_set_text(s_detail_name, c->name);
+    lv_label_set_text_fmt(s_detail_time, "%s - %s  周%s",
+                          c->start_time, c->end_time, s_weekday_names[c->day_of_week % 7] + 1);
+    lv_label_set_text_fmt(s_detail_meta, "老师:%s  地点:%s",
+                          c->teacher[0] ? c->teacher : "--", c->location[0] ? c->location : "--");
+    lv_label_set_text_fmt(s_detail_remind, "提前 %d 分钟提醒", c->remind_before);
+    lv_obj_set_style_border_color(s_detail_popup, ui_color_from_hex(c->color), 0);
+    lv_obj_clear_flag(s_detail_popup, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_detail_popup);
+}
 static void ui_create_status_bar(void);
 static void ui_create_timeline(void);
 static void ui_create_month_view(void);
 static void ui_create_reminder_popup(void);
-static void ui_on_content_gesture(lv_event_t *e);
+static void ui_create_detail_popup(void);
 static void ui_on_status_bar_click(lv_event_t *e);
 static void ui_on_course_card_click(lv_event_t *e);
 static void ui_on_kid_click(lv_event_t *e);
@@ -85,6 +149,7 @@ esp_err_t ui_init(void)
     ui_create_timeline();
     ui_create_month_view();
     ui_create_reminder_popup();
+    ui_create_detail_popup();
 
     /* Show timeline by default */
     lv_obj_clear_flag(s_timeline, LV_OBJ_FLAG_HIDDEN);
@@ -180,7 +245,6 @@ static void ui_create_timeline(void)
     lv_obj_set_flex_flow(s_timeline, s_landscape ? LV_FLEX_FLOW_ROW : LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(s_timeline, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
     lv_obj_add_flag(s_timeline, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_event_cb(s_timeline, ui_on_content_gesture, LV_EVENT_GESTURE, NULL);
 
     /* Placeholder label shown when no courses */
     lv_obj_t *placeholder = lv_label_create(s_timeline);
@@ -199,7 +263,6 @@ static void ui_create_month_view(void)
     lv_obj_set_flex_flow(s_month_view, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(s_month_view, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_START);
     lv_obj_add_flag(s_month_view, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_event_cb(s_month_view, ui_on_content_gesture, LV_EVENT_GESTURE, NULL);
 }
 
 static void reminder_timer_cb(lv_timer_t *timer)
@@ -252,6 +315,8 @@ void ui_set_orientation(bool landscape)
 
     /* Delete top-level containers (children go with them) and rebuild */
     if (s_reminder_timer) { lv_timer_del(s_reminder_timer); s_reminder_timer = NULL; }
+    if (s_detail_popup)   { lv_obj_del(s_detail_popup);   s_detail_popup = NULL;
+                            s_detail_name = s_detail_time = s_detail_meta = s_detail_remind = NULL; }
     if (s_status_bar)     { lv_obj_del(s_status_bar);     s_status_bar = NULL; }
     if (s_timeline)       { lv_obj_del(s_timeline);       s_timeline = NULL; }
     if (s_month_view)     { lv_obj_del(s_month_view);     s_month_view = NULL; }
@@ -264,6 +329,7 @@ void ui_set_orientation(bool landscape)
     ui_create_timeline();
     ui_create_month_view();
     ui_create_reminder_popup();
+    ui_create_detail_popup();
 
     lv_obj_clear_flag(s_timeline, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(s_month_view, LV_OBJ_FLAG_HIDDEN);
@@ -570,15 +636,6 @@ void ui_register_callbacks(void)
     /* Callbacks registered during object creation */
 }
 
-static void ui_on_content_gesture(lv_event_t *e)
-{
-    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
-
-    if (dir == LV_DIR_LEFT || dir == LV_DIR_RIGHT) {
-        ui_toggle_view();
-    }
-}
-
 static void (*s_sync_request_cb)(void) = NULL;
 
 void ui_set_sync_callback(void (*cb)(void))
@@ -628,6 +685,6 @@ static void ui_on_course_card_click(lv_event_t *e)
 
     if (c != NULL) {
         ESP_LOGI(TAG, "Course card clicked: %s at %s", c->name, c->start_time);
-        ui_show_reminder(c->name, c->start_time);
+        ui_show_course_detail(c);
     }
 }

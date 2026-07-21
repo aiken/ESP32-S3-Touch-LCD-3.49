@@ -64,7 +64,8 @@ class Course(BaseModel):
     id: str = ""
     kid: str = "meixi"
     name: str
-    day_of_week: int = Field(ge=0, le=6)   # 0=Sunday .. 6=Saturday
+    days: list[int] = []                 # recurring weekdays, 0=Sunday .. 6=Saturday
+    day_of_week: int | None = None       # legacy single-day input, converted
     start_time: str = "08:00"
     end_time: str = "09:00"
     teacher: str = ""
@@ -128,6 +129,24 @@ def delete_course(id: str, _=Depends(require_session)):
     return {"status": "ok"}
 
 
+@app.post("/api/courses/clone")
+def clone_course(body: dict, _=Depends(require_session)):
+    """Clone one course; body: {"id": "...", "target_kid": "meixi|zhuangzhuang"(opt)}"""
+    result = storage.clone(body.get("id", ""), body.get("target_kid"))
+    if not result:
+        raise HTTPException(404, "course not found")
+    return {"status": "ok", "saved": result}
+
+
+@app.post("/api/kids/clone")
+def clone_kid(body: dict, _=Depends(require_session)):
+    """Clone ALL courses from one kid to the other; body: {"from": "meixi", "to": "zhuangzhuang"}"""
+    n = storage.clone_all(body.get("from", ""), body.get("to", ""))
+    if n == 0:
+        raise HTTPException(400, "nothing cloned (check from/to)")
+    return {"status": "ok", "cloned": n}
+
+
 # ---------- device API (device key) ----------
 
 @app.get("/api/health")
@@ -141,12 +160,15 @@ def api_today(kid: str = "meixi", _=Depends(require_device_key)):
         raise HTTPException(400, "unknown kid")
     today = date.today()
     weekday = (today.weekday() + 1) % 7   # C tm_wday: 0=Sunday
+    courses = storage.list_today(kid, weekday)
+    for c in courses:
+        c["day_of_week"] = weekday  # display hint for simple clients
     return {
         "status": "ok",
         "date": today.isoformat(),
         "weekday": weekday,
         "kid": kid,
-        "courses": storage.list_today(kid, weekday),
+        "courses": courses,
     }
 
 

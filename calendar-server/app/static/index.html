@@ -31,6 +31,9 @@
   input[type=time] { width:96px; }
   input[type=number] { width:72px; }
   input[type=color] { width:44px; height:36px; padding:2px; }
+  .days { display:flex; gap:2px; align-items:center; }
+  .days label { border:1px solid var(--line); border-radius:8px; padding:6px 8px; font-size:13px; color:var(--mut); cursor:pointer; user-select:none; }
+  .days label.on { background:#22334a; color:#fff; border-color:var(--acc); }
   .primary { background:var(--acc); color:#06251f; border:none; border-radius:10px; padding:10px 22px; font-size:15px; font-weight:600; cursor:pointer; }
   .login { max-width:320px; margin:18vh auto; text-align:center; }
   .login input { width:100%; margin-bottom:12px; }
@@ -53,6 +56,7 @@
   <div class="tabs">
     <button id="tab-meixi" onclick="switchKid('meixi')">美熹</button>
     <button id="tab-zhuangzhuang" onclick="switchKid('zhuangzhuang')">壮壮</button>
+    <button class="mini" style="flex:0 0 auto;padding:10px 14px" onclick="cloneAll()">课表克隆给对方</button>
   </div>
   <div id="list"></div>
 
@@ -61,11 +65,7 @@
     <input type="hidden" id="f-id">
     <div class="row">
       <input type="text" id="f-name" placeholder="课程名（如 数学）" required>
-      <select id="f-day">
-        <option value="1">周一</option><option value="2">周二</option><option value="3">周三</option>
-        <option value="4">周四</option><option value="5">周五</option><option value="6">周六</option>
-        <option value="0">周日</option>
-      </select>
+      <span id="f-days"></span>
       <input type="time" id="f-start" value="08:30" required>
       <input type="time" id="f-end" value="10:00" required>
       <input type="color" id="f-color" value="#4A90D9">
@@ -84,6 +84,30 @@
 <script>
 const DAYS = ["周日","周一","周二","周三","周四","周五","周六"];
 let kid = "meixi", courses = [];
+
+/* 循环（一周多天）选择器 */
+(function buildDayPicker() {
+  const box = document.getElementById("f-days");
+  box.className = "days";
+  [1,2,3,4,5,6,0].forEach(d => {
+    const lb = document.createElement("label");
+    lb.textContent = DAYS[d].slice(1);
+    lb.dataset.d = d;
+    lb.onclick = () => lb.classList.toggle("on");
+    box.appendChild(lb);
+  });
+})();
+function getDays() {
+  return [...document.querySelectorAll("#f-days label.on")].map(l => parseInt(l.dataset.d)).sort();
+}
+function setDays(days) {
+  document.querySelectorAll("#f-days label").forEach(l =>
+    l.classList.toggle("on", days.includes(parseInt(l.dataset.d))));
+}
+function daysText(c) {
+  const ds = c.days && c.days.length ? c.days : [c.day_of_week];
+  return ds.length >= 7 ? "每天" : ds.map(d => DAYS[d]).join("");
+}
 
 async function api(path, opt) {
   const r = await fetch(path, Object.assign({headers:{"Content-Type":"application/json"}}, opt));
@@ -126,7 +150,10 @@ function render() {
   const box = document.getElementById("list");
   box.innerHTML = "";
   const byDay = {};
-  courses.forEach(c => (byDay[c.day_of_week] = byDay[c.day_of_week] || []).push(c));
+  courses.forEach(c => {
+    const ds = c.days && c.days.length ? c.days : [c.day_of_week];
+    ds.forEach(d => (byDay[d] = byDay[d] || []).push(c));
+  });
   const order = [1,2,3,4,5,6,0];
   let any = false;
   for (const d of order) {
@@ -138,9 +165,10 @@ function render() {
         <div class="dot" style="background:${c.color}"></div>
         <div class="info">
           <div class="name">${esc(c.name)}</div>
-          <div class="sub">${c.start_time} - ${c.end_time} · ${esc(c.teacher||"")} · ${esc(c.location||"")} · 提前${c.remind_before}分钟</div>
+          <div class="sub">${c.start_time} - ${c.end_time} · ${esc(c.teacher||"")} · ${esc(c.location||"")} · 提前${c.remind_before}分钟 · ${daysText(c)}</div>
         </div>
         <button class="mini" onclick='editCourse(${JSON.stringify(c.id)})'>编辑</button>
+        <button class="mini" onclick='cloneCourse(${JSON.stringify(c.id)})'>克隆</button>
         <button class="mini" onclick='delCourse(${JSON.stringify(c.id)})'>删除</button>
       </div>`).join("");
   }
@@ -154,7 +182,7 @@ function editCourse(id) {
   document.getElementById("formTitle").textContent = "编辑课程";
   document.getElementById("f-id").value = c.id;
   document.getElementById("f-name").value = c.name;
-  document.getElementById("f-day").value = c.day_of_week;
+  setDays(c.days && c.days.length ? c.days : [c.day_of_week]);
   document.getElementById("f-start").value = c.start_time;
   document.getElementById("f-end").value = c.end_time;
   document.getElementById("f-teacher").value = c.teacher||"";
@@ -167,7 +195,22 @@ function resetForm() {
   document.getElementById("formTitle").textContent = "添加课程";
   document.getElementById("f-id").value = "";
   document.getElementById("f-name").value = "";
+  setDays([]);
   document.getElementById("formErr").textContent = "";
+}
+
+async function cloneCourse(id) {
+  await api("/api/courses/clone", {method:"POST", body:JSON.stringify({id})});
+  load();
+}
+
+async function cloneAll() {
+  const other = kid === "meixi" ? "zhuangzhuang" : "meixi";
+  const otherName = other === "meixi" ? "美熹" : "壮壮";
+  if (!confirm(`把「${kid === "meixi" ? "美熹" : "壮壮"}」的全部课程克隆到「${otherName}」？（追加，不覆盖）`)) return;
+  const d = await api("/api/kids/clone", {method:"POST", body:JSON.stringify({from:kid, to:other})});
+  alert(`已克隆 ${d.cloned} 门课到「${otherName}」`);
+  switchKid(other);
 }
 
 async function saveCourse(e) {
@@ -176,7 +219,7 @@ async function saveCourse(e) {
     id: document.getElementById("f-id").value,
     kid,
     name: document.getElementById("f-name").value.trim(),
-    day_of_week: parseInt(document.getElementById("f-day").value),
+    days: getDays(),
     start_time: document.getElementById("f-start").value,
     end_time: document.getElementById("f-end").value,
     teacher: document.getElementById("f-teacher").value.trim(),
@@ -185,6 +228,7 @@ async function saveCourse(e) {
     color: document.getElementById("f-color").value,
   };
   if (!body.name) { document.getElementById("formErr").textContent = "课程名不能为空"; return false; }
+  if (!body.days.length) { document.getElementById("formErr").textContent = "请至少选择一天（循环）"; return false; }
   const d = await api("/api/courses", {method:"POST", body:JSON.stringify(body)});
   if (d.status === "ok") { resetForm(); load(); }
   return false;
