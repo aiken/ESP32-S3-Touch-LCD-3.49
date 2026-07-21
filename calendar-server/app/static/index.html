@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>儿童课程日历 · 管理</title>
+<style>
+  :root { --bg:#0f1117; --card:#1a1f2e; --line:#2a3042; --txt:#e8eaf0; --mut:#8a90a6; --acc:#4ECDC4; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,"PingFang SC",sans-serif; background:var(--bg); color:var(--txt); }
+  .wrap { max-width:860px; margin:0 auto; padding:20px 16px 60px; }
+  h1 { font-size:20px; margin:8px 0 16px; }
+  .tabs { display:flex; gap:8px; margin-bottom:16px; }
+  .tabs button { flex:1; padding:10px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--mut); font-size:16px; cursor:pointer; }
+  .tabs button.on { background:#22334a; color:#fff; border-color:var(--acc); }
+  .day { margin:18px 0 8px; color:var(--acc); font-size:14px; }
+  .course { display:flex; align-items:center; gap:10px; background:var(--card); border:1px solid var(--line);
+            border-radius:12px; padding:10px 12px; margin-bottom:8px; }
+  .dot { width:12px; height:36px; border-radius:6px; flex:none; }
+  .info { flex:1; min-width:0; }
+  .name { font-size:16px; font-weight:600; }
+  .sub { font-size:12px; color:var(--mut); margin-top:2px; }
+  button.mini { border:1px solid var(--line); background:transparent; color:var(--mut); border-radius:8px; padding:5px 10px; cursor:pointer; }
+  button.mini:hover { color:#fff; border-color:var(--acc); }
+  form { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; margin-top:20px; }
+  form h2 { font-size:15px; margin:0 0 10px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:8px; }
+  input, select { background:#12151f; color:var(--txt); border:1px solid var(--line); border-radius:8px; padding:8px; font-size:14px; }
+  input:focus, select:focus { outline:none; border-color:var(--acc); }
+  input[type=text] { flex:2; min-width:110px; }
+  input[type=time] { width:96px; }
+  input[type=number] { width:72px; }
+  input[type=color] { width:44px; height:36px; padding:2px; }
+  .primary { background:var(--acc); color:#06251f; border:none; border-radius:10px; padding:10px 22px; font-size:15px; font-weight:600; cursor:pointer; }
+  .login { max-width:320px; margin:18vh auto; text-align:center; }
+  .login input { width:100%; margin-bottom:12px; }
+  .login .primary { width:100%; }
+  .err { color:#ff6b6b; font-size:13px; min-height:18px; }
+  .top { display:flex; justify-content:space-between; align-items:center; }
+  .top a { color:var(--mut); font-size:13px; cursor:pointer; text-decoration:none; }
+</style>
+</head>
+<body>
+<div class="login" id="loginBox" style="display:none">
+  <h1>儿童课程日历</h1>
+  <input type="password" id="pw" placeholder="管理密码" onkeydown="if(event.key==='Enter')login()">
+  <div class="err" id="loginErr"></div>
+  <button class="primary" onclick="login()">登 录</button>
+</div>
+
+<div class="wrap" id="app" style="display:none">
+  <div class="top"><h1>儿童课程日历 · 课程管理</h1><a onclick="logout()">退出登录</a></div>
+  <div class="tabs">
+    <button id="tab-meixi" onclick="switchKid('meixi')">美熹</button>
+    <button id="tab-zhuangzhuang" onclick="switchKid('zhuangzhuang')">壮壮</button>
+  </div>
+  <div id="list"></div>
+
+  <form onsubmit="return saveCourse(event)">
+    <h2 id="formTitle">添加课程</h2>
+    <input type="hidden" id="f-id">
+    <div class="row">
+      <input type="text" id="f-name" placeholder="课程名（如 数学）" required>
+      <select id="f-day">
+        <option value="1">周一</option><option value="2">周二</option><option value="3">周三</option>
+        <option value="4">周四</option><option value="5">周五</option><option value="6">周六</option>
+        <option value="0">周日</option>
+      </select>
+      <input type="time" id="f-start" value="08:30" required>
+      <input type="time" id="f-end" value="10:00" required>
+      <input type="color" id="f-color" value="#4A90D9">
+    </div>
+    <div class="row">
+      <input type="text" id="f-teacher" placeholder="老师（可选）">
+      <input type="text" id="f-location" placeholder="地点（可选）">
+      <input type="number" id="f-remind" min="0" max="120" value="10" title="提前提醒(分钟)">
+      <button class="primary" type="submit">保存</button>
+      <button class="mini" type="button" onclick="resetForm()">取消</button>
+    </div>
+    <div class="err" id="formErr"></div>
+  </form>
+</div>
+
+<script>
+const DAYS = ["周日","周一","周二","周三","周四","周五","周六"];
+let kid = "meixi", courses = [];
+
+async function api(path, opt) {
+  const r = await fetch(path, Object.assign({headers:{"Content-Type":"application/json"}}, opt));
+  if (r.status === 401) { showLogin(); throw new Error("401"); }
+  return r.json();
+}
+
+function showLogin() {
+  document.getElementById("loginBox").style.display = "block";
+  document.getElementById("app").style.display = "none";
+}
+function showApp() {
+  document.getElementById("loginBox").style.display = "none";
+  document.getElementById("app").style.display = "block";
+}
+
+async function login() {
+  const pw = document.getElementById("pw").value;
+  const r = await fetch("/api/login", {method:"POST", headers:{"Content-Type":"application/json"},
+                                       body:JSON.stringify({password:pw})});
+  if (r.ok) { document.getElementById("pw").value=""; showApp(); load(); }
+  else document.getElementById("loginErr").textContent = "密码不对";
+}
+async function logout() { await fetch("/api/logout", {method:"POST"}); showLogin(); }
+
+function switchKid(k) {
+  kid = k;
+  document.getElementById("tab-meixi").className = k==="meixi" ? "on" : "";
+  document.getElementById("tab-zhuangzhuang").className = k==="zhuangzhuang" ? "on" : "";
+  resetForm(); load();
+}
+
+async function load() {
+  const d = await api("/api/courses?kid=" + kid);
+  courses = d.courses || [];
+  render();
+}
+
+function render() {
+  const box = document.getElementById("list");
+  box.innerHTML = "";
+  const byDay = {};
+  courses.forEach(c => (byDay[c.day_of_week] = byDay[c.day_of_week] || []).push(c));
+  const order = [1,2,3,4,5,6,0];
+  let any = false;
+  for (const d of order) {
+    const list = (byDay[d] || []).sort((a,b)=>a.start_time.localeCompare(b.start_time));
+    if (!list.length) continue;
+    any = true;
+    box.innerHTML += `<div class="day">${DAYS[d]}</div>` + list.map(c => `
+      <div class="course">
+        <div class="dot" style="background:${c.color}"></div>
+        <div class="info">
+          <div class="name">${esc(c.name)}</div>
+          <div class="sub">${c.start_time} - ${c.end_time} · ${esc(c.teacher||"")} · ${esc(c.location||"")} · 提前${c.remind_before}分钟</div>
+        </div>
+        <button class="mini" onclick='editCourse(${JSON.stringify(c.id)})'>编辑</button>
+        <button class="mini" onclick='delCourse(${JSON.stringify(c.id)})'>删除</button>
+      </div>`).join("");
+  }
+  if (!any) box.innerHTML = `<div class="sub" style="margin-top:30px;text-align:center">还没有课程，在下方添加</div>`;
+}
+
+function esc(s){ return String(s).replace(/[&<>"]/g, m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[m])); }
+
+function editCourse(id) {
+  const c = courses.find(x=>x.id===id); if(!c) return;
+  document.getElementById("formTitle").textContent = "编辑课程";
+  document.getElementById("f-id").value = c.id;
+  document.getElementById("f-name").value = c.name;
+  document.getElementById("f-day").value = c.day_of_week;
+  document.getElementById("f-start").value = c.start_time;
+  document.getElementById("f-end").value = c.end_time;
+  document.getElementById("f-teacher").value = c.teacher||"";
+  document.getElementById("f-location").value = c.location||"";
+  document.getElementById("f-remind").value = c.remind_before;
+  document.getElementById("f-color").value = c.color;
+  window.scrollTo(0, document.body.scrollHeight);
+}
+function resetForm() {
+  document.getElementById("formTitle").textContent = "添加课程";
+  document.getElementById("f-id").value = "";
+  document.getElementById("f-name").value = "";
+  document.getElementById("formErr").textContent = "";
+}
+
+async function saveCourse(e) {
+  e.preventDefault();
+  const body = {
+    id: document.getElementById("f-id").value,
+    kid,
+    name: document.getElementById("f-name").value.trim(),
+    day_of_week: parseInt(document.getElementById("f-day").value),
+    start_time: document.getElementById("f-start").value,
+    end_time: document.getElementById("f-end").value,
+    teacher: document.getElementById("f-teacher").value.trim(),
+    location: document.getElementById("f-location").value.trim(),
+    remind_before: parseInt(document.getElementById("f-remind").value || "10"),
+    color: document.getElementById("f-color").value,
+  };
+  if (!body.name) { document.getElementById("formErr").textContent = "课程名不能为空"; return false; }
+  const d = await api("/api/courses", {method:"POST", body:JSON.stringify(body)});
+  if (d.status === "ok") { resetForm(); load(); }
+  return false;
+}
+
+async function delCourse(id) {
+  if (!confirm("删除这节课？")) return;
+  await api("/api/courses?id=" + encodeURIComponent(id), {method:"DELETE"});
+  load();
+}
+
+(async () => {
+  try { await api("/api/courses?kid=" + kid); showApp(); switchKid("meixi"); }
+  catch(e) { showLogin(); }
+})();
+</script>
+</body>
+</html>

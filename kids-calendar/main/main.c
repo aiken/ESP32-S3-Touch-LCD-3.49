@@ -78,6 +78,17 @@ static const course_t s_demo_courses[] = {
 
 static const int s_demo_course_count = sizeof(s_demo_courses) / sizeof(s_demo_courses[0]);
 
+/* Server-synced courses (fallback: demo data until the first fetch) */
+#define MAX_COURSES 16
+static course_t s_courses[MAX_COURSES];
+static uint32_t s_courses_ver = 0;
+static volatile bool s_sync_requested = false;
+
+static void on_sync_request(void)
+{
+    s_sync_requested = true;
+}
+
 
 static const char *TAG = "example";
 
@@ -520,9 +531,38 @@ void app_main(void)
         wifi_sync_start_time_task();
     }
 
+    /* Seed courses from the NVS cache (fast, offline-safe); the background
+       course task refreshes from the server when Wi-Fi is up */
+    {
+        int n = wifi_sync_get_courses(s_courses, MAX_COURSES);
+        if (n > 0 && example_lvgl_lock(100)) {
+            ui_show_course_timeline(s_courses, n);
+            example_lvgl_unlock();
+        }
+        ui_set_sync_callback(on_sync_request);
+    }
+
     /* Main loop: update status bar only when minute changes to avoid flicker */
     int last_min = -1;
     while (1) {
+        /* Manual sync requested by tapping the status bar */
+        if (s_sync_requested) {
+            s_sync_requested = false;
+            ESP_LOGI(TAG, "manual course sync...");
+            wifi_sync_refresh_courses();
+        }
+
+        /* Pick up fresh course data when the version changes */
+        uint32_t v = wifi_sync_courses_version();
+        if (v != s_courses_ver) {
+            s_courses_ver = v;
+            int n = wifi_sync_get_courses(s_courses, MAX_COURSES);
+            if (n > 0 && example_lvgl_lock(100)) {
+                ui_show_course_timeline(s_courses, n);
+                example_lvgl_unlock();
+            }
+        }
+
         struct tm now;
         if (rtc_get_time(&now) == ESP_OK) {
             if (now.tm_min != last_min) {
@@ -539,10 +579,18 @@ void app_main(void)
                 }
 
                 if (example_lvgl_lock(100)) {
-                    ui_update_statusbar(date_buf, weekday, time_buf, wifi_sync_is_connected());
-                    ui_update_battery(battery_get_percent());
+                    char wifi_text[24] = "WiFi";
+                    bool wifi_ok = wifi_sync_get_ssid(wifi_text, sizeof(wifi_text));
+                    ui_update_statusbar(date_buf, weekday, time_buf, wifi_ok, wifi_text);
+                    ui_update_battery(battery_get_percent(), battery_is_charging());
                     ui_set_current_time(now.tm_hour, now.tm_min);
-                    ui_show_course_timeline(s_demo_courses, s_demo_course_count);
+                    /* Re-render with the freshest source (server if available) */
+                    int n = wifi_sync_get_courses(s_courses, MAX_COURSES);
+                    if (n > 0) {
+                        ui_show_course_timeline(s_courses, n);
+                    } else {
+                        ui_show_course_timeline(s_demo_courses, s_demo_course_count);
+                    }
                     example_lvgl_unlock();
                 }
             }

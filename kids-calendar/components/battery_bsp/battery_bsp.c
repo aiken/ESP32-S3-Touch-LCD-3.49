@@ -6,6 +6,7 @@
 #include "esp_adc/adc_cali.h"
 #include "esp_adc/adc_cali_scheme.h"
 #include "driver/i2c_master.h"
+#include "driver/gpio.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "pcf85063.h"
@@ -21,6 +22,8 @@ static const char *TAG = "BATT";
 /* Battery voltage: ADC1_CH3 (GPIO4), 3:1 divider */
 #define BATT_ADC_UNIT       ADC_UNIT_1
 #define BATT_ADC_CHAN       ADC_CHANNEL_3
+/* GPIO16: VBAT power detection — HIGH = on battery, LOW = on USB (charging) */
+#define BATT_VBAT_GPIO      GPIO_NUM_16
 
 static adc_oneshot_unit_handle_t s_adc = NULL;
 static adc_cali_handle_t s_cali = NULL;
@@ -117,4 +120,26 @@ int battery_get_percent(void)
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
     return pct;
+}
+
+bool battery_is_charging(void)
+{
+    /* No usable hardware charging signal on this board (GPIO16 stays HIGH),
+       so infer from voltage: at/above charge voltage, or rising trend.
+       Called about once per minute from the status-bar refresh. */
+    float v = battery_get_voltage();
+    if (v < 0) {
+        return false;
+    }
+
+    static float hist[3] = {0};
+    static int idx = 0, filled = 0;
+    float prev_avg = (filled == 3) ? (hist[0] + hist[1] + hist[2]) / 3.0f : -1.0f;
+    hist[idx] = v;
+    idx = (idx + 1) % 3;
+    if (filled < 3) filled++;
+
+    bool charging = (v >= 4.18f) || (filled == 3 && v > prev_avg + 0.01f);
+    ESP_LOGI(TAG, "vbat=%.3fV -> %s", v, charging ? "charging" : "battery");
+    return charging;
 }

@@ -10,6 +10,7 @@ This repository centers on the **Waveshare ESP32-S3-Touch-LCD-3.49** development
 
 1. **Vendor example firmware** (`Examples/Arduino`, `Examples/ESP-IDF`) — the original Waveshare demo projects, one per peripheral, plus prebuilt binaries in `Firmware/`.
 2. **`kids-calendar/`** — the **active development project**: an ESP-IDF application that turns the board into a kids' calendar/course-schedule display using LVGL 9. This is where new work happens.
+3. **`calendar-server/`** — the **cloud backend** (FastAPI, Python): serves the web course editor (password login, per-kid tabs) and the device API (`/api/today`, `/api/sync` with `X-Device-Key` auth). Runs locally for dev, deploys to the NAS via Docker (`Dockerfile` + `docker-compose.yml`, data in `data/courses.json`), exposed externally through Cloudflare Tunnel. See `calendar-server/README.md`.
 3. **Support material** — `Arduino_Libraries/` (libraries for the Arduino examples), `prompt/` (Chinese-language working notes/prompts used to drive AI-assisted development, e.g. screenshot-debug workflows), and `.codegraph/` (a local code index; ignore it).
 
 Product wikis: https://www.waveshare.com/wiki/ESP32-S3-Touch-LCD-3.49 (English), https://www.waveshare.net/wiki/ESP32-S3-Touch-LCD-3.49 (中文).
@@ -107,7 +108,7 @@ The single source of truth for: QSPI LCD pins, display resolution (172×640), DM
 | `ui_calendar` | Used | All screens: status bar (incl. battery icon/percent), course timeline, month calendar, reminders, styles, CJK fonts, `ui_set_orientation()` for portrait/landscape rebuild, plus `ui_screenshot.c` |
 | `usb_screenshot` | Used | Dumps the RGB565 frame buffer over USB-Serial-JTAG (native USB, `/dev/tty.usbmodem*`) for AI-assisted visual debugging; **on-demand** — sends one frame when it receives the `screenshot` command; frame grab runs under the LVGL mutex + `lv_refr_now()` (no tearing) |
 | `screenshot_server` | Written, **not wired in** | HTTP server serving the frame buffer as BMP (`/screen`) for Wi-Fi-based screenshot debugging |
-| `wifi_sync` | Used | Wi-Fi STA + NTP time sync: connects with Kconfig credentials, SNTP → writes RTC (Beijing TZ, re-sync every 6 h), drives the status-bar WiFi indicator. Needs `nvs_flash_init()` before `esp_wifi_init` |
+| `wifi_sync` | Used | Wi-Fi STA + NTP time sync (writes RTC, Beijing TZ, resync 6 h) + **course sync**: `GET /api/today?kid=...` from `API_LAN_URL` first, `API_CLOUD_URL` (Cloudflare Tunnel HTTPS) as fallback, NVS-cached for offline use, 5 min poll, status-bar tap = manual sync. Also drives the SSID indicator. Needs `nvs_flash_init()` before `esp_wifi_init` |
 
 The `course_t` data model (`id[32]`, `name[64]`, `day_of_week`, `start_time[8]`/`end_time[8]`, `teacher[32]`, `location[64]`, `color[8]`, `remind_before`) is defined in `ui_calendar/include/ui_calendar.h`; `main.c` currently feeds it hard-coded demo courses (`s_demo_courses[]`) with Chinese names — only characters covered by `lv_font_chinese_14/16` may be used. The fonts are generated with:
 

@@ -36,6 +36,33 @@ config API_PATH
     help
         API base path
 
+config KID_PROFILE
+    string "Kid profile (meixi / zhuangzhuang)"
+    default "meixi"
+    help
+        Which kid's courses this device shows
+
+config API_LAN_URL
+    string "API LAN URL (preferred)"
+    default "http://192.168.1.100:3001"
+    help
+        LAN base URL of the calendar server, tried FIRST.
+        Example: http://192.168.1.100:3001
+
+config API_CLOUD_URL
+    string "API Cloud URL (fallback, Cloudflare Tunnel)"
+    default ""
+    help
+        HTTPS base URL via Cloudflare Tunnel, used when LAN fails.
+        Leave empty to disable the fallback.
+        Example: https://calendar.example.com
+
+config DEVICE_KEY
+    string "Device API Key"
+    default "devkey-change-me"
+    help
+        Sent as X-Device-Key header to the calendar server
+
 config TIMEZONE_OFFSET
     int "Timezone Offset (hours)"
     default 8

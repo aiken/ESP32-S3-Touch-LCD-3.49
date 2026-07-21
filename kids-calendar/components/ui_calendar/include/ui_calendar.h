@@ -21,9 +21,12 @@ typedef struct {
 
 esp_err_t ui_init(void);
 void ui_update_statusbar(const char *date, const char *weekday,
-                         const char *time_str, bool wifi_ok);
-void ui_update_battery(int pct);
+                         const char *time_str, bool wifi_ok,
+                         const char *wifi_text);
+void ui_update_battery(int pct, bool charging);
 void ui_set_current_time(int hour, int minute);
+/* Register a callback fired when the status bar is tapped (manual sync) */
+void ui_set_sync_callback(void (*cb)(void));
 void ui_set_orientation(bool landscape);
 void ui_show_course_timeline(const course_t *courses, int count);
 void ui_show_month_calendar(int year, int month, int today_day);

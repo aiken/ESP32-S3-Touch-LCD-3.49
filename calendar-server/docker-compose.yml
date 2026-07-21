@@ -1,0 +1,14 @@
+services:
+  calendar:
+    build: .
+    container_name: kids-calendar
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      # 改成你自己的密码和设备密钥
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      DEVICE_KEY: ${DEVICE_KEY:-devkey-change-me}
+      DATA_DIR: /data
+    volumes:
+      - ./data:/data

@@ -1,6 +1,7 @@
 #include "wifi_sync.h"
 
 #include <string.h>
+#include <stdlib.h>
 #include <time.h>
 #include "esp_log.h"
 #include "esp_check.h"
@@ -8,6 +9,11 @@
 #include "esp_event.h"
 #include "esp_netif.h"
 #include "esp_sntp.h"
+#include "esp_http_client.h"
+#include "esp_crt_bundle.h"
+#include "cJSON.h"
+#include "nvs_flash.h"
+#include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -18,6 +24,10 @@ static const char *TAG = "WIFI";
 #define WIFI_CONNECTED_BIT  BIT0
 #define NTP_RETRY_COUNT     20
 #define RESYNC_INTERVAL_MS  (6 * 3600 * 1000)
+#define COURSE_SYNC_INTERVAL_MS (5 * 60 * 1000)
+#define HTTP_BUF_SIZE       (32 * 1024)
+#define NVS_NAMESPACE       "cal"
+#define NVS_KEY_TODAY       "today"
 
 static EventGroupHandle_t s_wifi_events = NULL;
 static bool s_connected = false;
@@ -74,6 +84,25 @@ bool wifi_sync_is_connected(void)
     return s_connected;
 }
 
+bool wifi_sync_get_ssid(char *buf, size_t len)
+{
+    if (!s_connected || !buf || len == 0) {
+        return false;
+    }
+    wifi_ap_record_t ap = {0};
+    const char *ssid = NULL;
+    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK && ap.ssid[0] != '\0') {
+        ssid = (const char *)ap.ssid;
+    } else {
+        ssid = CONFIG_WIFI_SSID;  /* fallback: the configured one */
+    }
+    strncpy(buf, ssid, len - 1);
+    buf[len - 1] = '\0';
+    return true;
+}
+
+/* ---------------- NTP time sync ---------------- */
+
 static void time_sync_task(void *arg)
 {
     /* POSIX TZ sign is inverted: Beijing (UTC+8) -> "CST-8" */
@@ -120,8 +149,217 @@ static void time_sync_task(void *arg)
     }
 }
 
+/* ---------------- course sync (LAN first, cloud fallback) ---------------- */
+
+static char *http_get(const char *url)
+{
+    char *buf = heap_caps_malloc(HTTP_BUF_SIZE, MALLOC_CAP_SPIRAM);
+    if (!buf) {
+        return NULL;
+    }
+
+    esp_http_client_config_t cfg = {
+        .url = url,
+        .timeout_ms = 8000,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&cfg);
+    esp_http_client_set_header(client, "X-Device-Key", CONFIG_DEVICE_KEY);
+
+    esp_err_t err = esp_http_client_open(client, 0);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "open failed %s: %s", url, esp_err_to_name(err));
+        esp_http_client_cleanup(client);
+        free(buf);
+        return NULL;
+    }
+
+    /* fetch_headers is REQUIRED before status code / body reads,
+       otherwise status stays 0 and reads error out */
+    int64_t content_len = esp_http_client_fetch_headers(client);
+    int status = esp_http_client_get_status_code(client);
+    int total = 0;
+    while (total < HTTP_BUF_SIZE - 1) {
+        int n = esp_http_client_read(client, buf + total, HTTP_BUF_SIZE - 1 - total);
+        if (n < 0) {
+            ESP_LOGW(TAG, "read error %d after %d bytes", n, total);
+            err = ESP_FAIL;
+            break;
+        }
+        if (n == 0) break;
+        total += n;
+    }
+    esp_http_client_close(client);
+    esp_http_client_cleanup(client);
+
+    if (status != 200 || total <= 0) {
+        ESP_LOGW(TAG, "GET %s -> %d (%d bytes)", url, status, total);
+        free(buf);
+        return NULL;
+    }
+    buf[total] = '\0';
+    ESP_LOGI(TAG, "GET %s -> 200 (%d bytes)", url, total);
+    return buf;
+}
+
+static void copy_str(char *dst, size_t dst_size, const cJSON *obj, const char *key)
+{
+    const cJSON *item = cJSON_GetObjectItemCaseSensitive((cJSON *)obj, key);
+    if (cJSON_IsString(item) && item->valuestring) {
+        strncpy(dst, item->valuestring, dst_size - 1);
+        dst[dst_size - 1] = '\0';
+    }
+}
+
+static int parse_courses_json(const char *json, course_t *out, int max)
+{
+    cJSON *root = cJSON_Parse(json);
+    if (!root) {
+        return -1;
+    }
+    const cJSON *courses = cJSON_GetObjectItemCaseSensitive(root, "courses");
+    if (!cJSON_IsArray(courses)) {
+        cJSON_Delete(root);
+        return -1;
+    }
+
+    int count = 0;
+    const cJSON *item;
+    cJSON_ArrayForEach(item, courses) {
+        if (count >= max) break;
+        course_t *c = &out[count];
+        memset(c, 0, sizeof(*c));
+        copy_str(c->id, sizeof(c->id), item, "id");
+        copy_str(c->name, sizeof(c->name), item, "name");
+        copy_str(c->start_time, sizeof(c->start_time), item, "start_time");
+        copy_str(c->end_time, sizeof(c->end_time), item, "end_time");
+        copy_str(c->teacher, sizeof(c->teacher), item, "teacher");
+        copy_str(c->location, sizeof(c->location), item, "location");
+        copy_str(c->color, sizeof(c->color), item, "color");
+        const cJSON *dow = cJSON_GetObjectItemCaseSensitive(item, "day_of_week");
+        const cJSON *rb = cJSON_GetObjectItemCaseSensitive(item, "remind_before");
+        c->day_of_week = cJSON_IsNumber(dow) ? (int)dow->valuedouble : 1;
+        c->remind_before = cJSON_IsNumber(rb) ? (int)rb->valuedouble : 10;
+        if (c->name[0] == '\0') continue;
+        count++;
+    }
+    cJSON_Delete(root);
+    return count;
+}
+
+/* NVS cache of the last good /api/today payload */
+static void cache_save(const char *json)
+{
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_str(h, NVS_KEY_TODAY, json);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+
+static char *cache_load(void)
+{
+    char *buf = NULL;
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) == ESP_OK) {
+        size_t len = 0;
+        if (nvs_get_str(h, NVS_KEY_TODAY, NULL, &len) == ESP_OK && len > 1) {
+            buf = malloc(len);
+            if (buf) {
+                nvs_get_str(h, NVS_KEY_TODAY, buf, &len);
+            }
+        }
+        nvs_close(h);
+    }
+    return buf;
+}
+
+static char *s_fresh_json = NULL;   /* freshest good payload (owned) */
+static uint32_t s_courses_version = 0;
+
+static void update_fresh_json(char *json, bool save_cache)
+{
+    if (s_fresh_json) {
+        free(s_fresh_json);
+    }
+    s_fresh_json = json;
+    s_courses_version++;
+    if (save_cache && json) {
+        cache_save(json);
+    }
+}
+
+esp_err_t wifi_sync_refresh_courses(void)
+{
+    char url[192];
+
+    /* 1) LAN first */
+    snprintf(url, sizeof(url), "%s/api/today?kid=%s", CONFIG_API_LAN_URL, CONFIG_KID_PROFILE);
+    char *json = http_get(url);
+
+    /* 2) Cloudflare fallback */
+    if (!json && strlen(CONFIG_API_CLOUD_URL) > 0) {
+        ESP_LOGI(TAG, "LAN fetch failed, trying cloud URL");
+        snprintf(url, sizeof(url), "%s/api/today?kid=%s", CONFIG_API_CLOUD_URL, CONFIG_KID_PROFILE);
+        json = http_get(url);
+    }
+
+    if (!json) {
+        return ESP_FAIL;
+    }
+    int probe_max = 4;
+    course_t probe[4];
+    int n = parse_courses_json(json, probe, probe_max);
+    if (n < 0) {
+        ESP_LOGE(TAG, "invalid JSON from server");
+        free(json);
+        return ESP_FAIL;
+    }
+    update_fresh_json(json, true);
+    return ESP_OK;
+}
+
+int wifi_sync_get_courses(course_t *out, int max)
+{
+    /* Lazy-load the NVS cache once, so the UI has data before first fetch */
+    if (!s_fresh_json) {
+        char *cached = cache_load();
+        if (cached) {
+            update_fresh_json(cached, false);
+            s_courses_version = 0;  /* cached data is not "new" */
+        }
+    }
+    if (!s_fresh_json) {
+        return -1;
+    }
+    return parse_courses_json(s_fresh_json, out, max);
+}
+
+uint32_t wifi_sync_courses_version(void)
+{
+    return s_courses_version;
+}
+
+static void course_sync_task(void *arg)
+{
+    for (;;) {
+        xEventGroupWaitBits(s_wifi_events, WIFI_CONNECTED_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
+        esp_err_t err = wifi_sync_refresh_courses();
+        if (err != ESP_OK) {
+            ESP_LOGW(TAG, "course sync failed, using cached data");
+            vTaskDelay(pdMS_TO_TICKS(60000));  /* retry sooner on failure */
+            continue;
+        }
+        vTaskDelay(pdMS_TO_TICKS(COURSE_SYNC_INTERVAL_MS));
+    }
+}
+
 esp_err_t wifi_sync_start_time_task(void)
 {
-    return xTaskCreatePinnedToCore(time_sync_task, "ntp_sync", 4096, NULL, 3, NULL, 0) == pdPASS
+    if (xTaskCreatePinnedToCore(time_sync_task, "ntp_sync", 4096, NULL, 3, NULL, 0) != pdPASS) {
+        return ESP_FAIL;
+    }
+    return xTaskCreatePinnedToCore(course_sync_task, "course_sync", 8192, NULL, 3, NULL, 0) == pdPASS
            ? ESP_OK : ESP_FAIL;
 }

@@ -1,5 +1,6 @@
 #pragma once
 
+#include <stdbool.h>
 #include "esp_err.h"
 
 #ifdef __cplusplus
@@ -16,6 +17,9 @@ float battery_get_voltage(void);
 
 /* Battery level 0..100 (linear 3.3V..4.2V approximation) */
 int battery_get_percent(void);
+
+/* true when on USB power / charging (GPIO16 VBAT detect) */
+bool battery_is_charging(void);
 
 #ifdef __cplusplus
 }

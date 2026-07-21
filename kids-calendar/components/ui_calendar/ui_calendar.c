@@ -29,6 +29,7 @@ static lv_obj_t *s_time_label = NULL;
 static lv_obj_t *s_wifi_label = NULL;
 static lv_obj_t *s_batt_icon_label = NULL;
 static lv_obj_t *s_batt_pct_label = NULL;
+static lv_obj_t *s_batt_charge_label = NULL;
 
 static lv_obj_t *s_timeline = NULL;
 static lv_obj_t *s_month_view = NULL;
@@ -47,7 +48,9 @@ static char s_last_date[16] = "--/--";
 static char s_last_weekday[8] = "--";
 static char s_last_time[16] = "--:--";
 static bool s_last_wifi = false;
+static char s_last_wifi_text[24] = "WiFi";
 static int s_last_batt_pct = -1;
+static bool s_last_charging = false;
 static int s_now_minutes = -1;   /* current time in minutes, for "进行中" highlight */
 
 static const char *s_weekday_names[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
@@ -96,7 +99,8 @@ static void ui_layout_status_bar(void)
         lv_obj_align(s_time_label, LV_ALIGN_RIGHT_MID, -4, -8);
         lv_obj_align(s_wifi_label, LV_ALIGN_BOTTOM_RIGHT, -4, 0);
         lv_obj_align(s_batt_icon_label, LV_ALIGN_BOTTOM_LEFT, 4, 0);
-        lv_obj_align_to(s_batt_pct_label, s_batt_icon_label, LV_ALIGN_OUT_RIGHT_MID, 2, 0);
+        lv_obj_align_to(s_batt_charge_label, s_batt_icon_label, LV_ALIGN_OUT_RIGHT_MID, 2, 0);
+        lv_obj_align_to(s_batt_pct_label, s_batt_charge_label, LV_ALIGN_OUT_RIGHT_MID, 2, 0);
     } else {
         /* Landscape (640x172): single row, battery + wifi left of the clock */
         lv_obj_align(s_date_label, LV_ALIGN_LEFT_MID, 4, 0);
@@ -104,7 +108,8 @@ static void ui_layout_status_bar(void)
         lv_obj_align(s_time_label, LV_ALIGN_RIGHT_MID, -4, 0);
         lv_obj_align_to(s_wifi_label, s_time_label, LV_ALIGN_OUT_LEFT_MID, -14, 0);
         lv_obj_align_to(s_batt_pct_label, s_wifi_label, LV_ALIGN_OUT_LEFT_MID, -12, 0);
-        lv_obj_align_to(s_batt_icon_label, s_batt_pct_label, LV_ALIGN_OUT_LEFT_MID, -3, 0);
+        lv_obj_align_to(s_batt_charge_label, s_batt_pct_label, LV_ALIGN_OUT_LEFT_MID, -3, 0);
+        lv_obj_align_to(s_batt_icon_label, s_batt_charge_label, LV_ALIGN_OUT_LEFT_MID, -3, 0);
     }
 }
 
@@ -141,6 +146,12 @@ static void ui_create_status_bar(void)
     s_batt_pct_label = lv_label_create(s_status_bar);
     ui_style_label(s_batt_pct_label, font_small, lv_color_hex(0xAAAAAA));
     lv_label_set_text(s_batt_pct_label, "--%");
+
+    /* Charging bolt (shown only when on USB power) */
+    s_batt_charge_label = lv_label_create(s_status_bar);
+    lv_obj_set_style_text_font(s_batt_charge_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(s_batt_charge_label, lv_color_hex(0x4ADE80), 0);
+    lv_label_set_text(s_batt_charge_label, "");
 
     ui_layout_status_bar();
 }
@@ -231,7 +242,7 @@ void ui_set_orientation(bool landscape)
     if (s_month_view)     { lv_obj_del(s_month_view);     s_month_view = NULL; }
     if (s_reminder_popup) { lv_obj_del(s_reminder_popup); s_reminder_popup = NULL; }
     s_date_label = s_weekday_label = s_time_label = s_wifi_label = NULL;
-    s_batt_icon_label = s_batt_pct_label = NULL;
+    s_batt_icon_label = s_batt_pct_label = s_batt_charge_label = NULL;
 
     ui_create_status_bar();
     ui_create_timeline();
@@ -242,8 +253,8 @@ void ui_set_orientation(bool landscape)
     lv_obj_add_flag(s_month_view, LV_OBJ_FLAG_HIDDEN);
 
     /* Restore cached content */
-    ui_update_statusbar(s_last_date, s_last_weekday, s_last_time, s_last_wifi);
-    ui_update_battery(s_last_batt_pct);
+    ui_update_statusbar(s_last_date, s_last_weekday, s_last_time, s_last_wifi, s_last_wifi_text);
+    ui_update_battery(s_last_batt_pct, s_last_charging);
     ui_show_course_timeline(s_last_courses, s_last_course_count);
     ui_show_month_calendar(s_current_year, s_current_month, s_today_day);
 
@@ -252,7 +263,8 @@ void ui_set_orientation(bool landscape)
 }
 
 void ui_update_statusbar(const char *date, const char *weekday,
-                         const char *time_str, bool wifi_ok)
+                         const char *time_str, bool wifi_ok,
+                         const char *wifi_text)
 {
     if (date) {
         lv_label_set_text(s_date_label, date);
@@ -267,9 +279,12 @@ void ui_update_statusbar(const char *date, const char *weekday,
         strncpy(s_last_time, time_str, sizeof(s_last_time) - 1);
     }
     s_last_wifi = wifi_ok;
+    if (wifi_text) {
+        strncpy(s_last_wifi_text, wifi_text, sizeof(s_last_wifi_text) - 1);
+    }
 
     if (s_wifi_label) {
-        lv_label_set_text(s_wifi_label, "WiFi");
+        lv_label_set_text(s_wifi_label, wifi_text ? wifi_text : "WiFi");
         lv_obj_set_style_text_color(s_wifi_label,
                                     wifi_ok ? lv_color_hex(0x4ECDC4) : lv_color_hex(0x555566), 0);
     }
@@ -283,9 +298,10 @@ void ui_set_current_time(int hour, int minute)
     s_now_minutes = (hour >= 0 && minute >= 0) ? hour * 60 + minute : -1;
 }
 
-void ui_update_battery(int pct)
+void ui_update_battery(int pct, bool charging)
 {
     s_last_batt_pct = pct;
+    s_last_charging = charging;
     if (!s_batt_icon_label || !s_batt_pct_label) {
         return;
     }
@@ -293,23 +309,27 @@ void ui_update_battery(int pct)
     if (pct < 0) {
         lv_label_set_text(s_batt_icon_label, LV_SYMBOL_BATTERY_EMPTY);
         lv_label_set_text(s_batt_pct_label, "--%");
-        return;
+    } else {
+        const char *icon;
+        if (pct >= 80)      icon = LV_SYMBOL_BATTERY_FULL;
+        else if (pct >= 50) icon = LV_SYMBOL_BATTERY_3;
+        else if (pct >= 25) icon = LV_SYMBOL_BATTERY_2;
+        else if (pct >= 10) icon = LV_SYMBOL_BATTERY_1;
+        else                icon = LV_SYMBOL_BATTERY_EMPTY;
+        lv_label_set_text(s_batt_icon_label, icon);
+
+        lv_label_set_text_fmt(s_batt_pct_label, "%d%%", pct);
+
+        /* Warn in red when low */
+        lv_color_t color = (pct < 20) ? lv_color_hex(0xFF6B6B) : lv_color_hex(0xAAAAAA);
+        lv_obj_set_style_text_color(s_batt_icon_label, color, 0);
+        lv_obj_set_style_text_color(s_batt_pct_label, color, 0);
     }
 
-    const char *icon;
-    if (pct >= 80)      icon = LV_SYMBOL_BATTERY_FULL;
-    else if (pct >= 50) icon = LV_SYMBOL_BATTERY_3;
-    else if (pct >= 25) icon = LV_SYMBOL_BATTERY_2;
-    else if (pct >= 10) icon = LV_SYMBOL_BATTERY_1;
-    else                icon = LV_SYMBOL_BATTERY_EMPTY;
-    lv_label_set_text(s_batt_icon_label, icon);
-
-    lv_label_set_text_fmt(s_batt_pct_label, "%d%%", pct);
-
-    /* Warn in red when low */
-    lv_color_t color = (pct < 20) ? lv_color_hex(0xFF6B6B) : lv_color_hex(0xAAAAAA);
-    lv_obj_set_style_text_color(s_batt_icon_label, color, 0);
-    lv_obj_set_style_text_color(s_batt_pct_label, color, 0);
+    /* Charging bolt next to the battery icon (green when on USB) */
+    if (s_batt_charge_label) {
+        lv_label_set_text(s_batt_charge_label, charging ? LV_SYMBOL_CHARGE : "");
+    }
 }
 
 void ui_show_course_timeline(const course_t *courses, int count)
@@ -543,10 +563,20 @@ static void ui_on_content_gesture(lv_event_t *e)
     }
 }
 
+static void (*s_sync_request_cb)(void) = NULL;
+
+void ui_set_sync_callback(void (*cb)(void))
+{
+    s_sync_request_cb = cb;
+}
+
 static void ui_on_status_bar_click(lv_event_t *e)
 {
     (void)e;
-    ESP_LOGI(TAG, "Status bar tapped: trigger sync (TODO)");
+    ESP_LOGI(TAG, "Status bar tapped: trigger sync");
+    if (s_sync_request_cb) {
+        s_sync_request_cb();
+    }
 }
 
 static void ui_on_course_card_click(lv_event_t *e)
