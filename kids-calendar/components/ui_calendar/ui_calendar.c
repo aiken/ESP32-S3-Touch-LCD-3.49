@@ -214,11 +214,11 @@ static void ui_create_status_bar(void)
     lv_label_set_text(s_weekday_label, "--");
 
     s_time_label = lv_label_create(s_status_bar);
-    ui_style_label(s_time_label, &lv_font_montserrat_24, lv_color_white());
+    ui_style_label(s_time_label, &lv_font_montserrat_16, lv_color_white());
     lv_label_set_text(s_time_label, "--:--");
 
     s_wifi_label = lv_label_create(s_status_bar);
-    ui_style_label(s_wifi_label, font_small, lv_color_hex(0x888888));
+    ui_style_label(s_wifi_label, &lv_font_montserrat_16, lv_color_hex(0x888888));
     lv_label_set_text(s_wifi_label, "WiFi");
 
     /* Battery: icon (Montserrat has the LV_SYMBOL_BATTERY_* glyphs) + percent */
@@ -228,7 +228,7 @@ static void ui_create_status_bar(void)
     lv_label_set_text(s_batt_icon_label, LV_SYMBOL_BATTERY_EMPTY);
 
     s_batt_pct_label = lv_label_create(s_status_bar);
-    ui_style_label(s_batt_pct_label, font_small, lv_color_hex(0xAAAAAA));
+    ui_style_label(s_batt_pct_label, &lv_font_montserrat_16, lv_color_hex(0xAAAAAA));
     lv_label_set_text(s_batt_pct_label, "--%");
 
     /* Charging bolt (shown only when on USB power) */
@@ -239,7 +239,7 @@ static void ui_create_status_bar(void)
 
     /* Kid profile label (tap to switch 美熹/壮壮) — padded for a bigger hit area */
     s_kid_label = lv_label_create(s_status_bar);
-    ui_style_label(s_kid_label, font_small, lv_color_hex(0xFFE66D));
+    ui_style_label(s_kid_label, font_normal, lv_color_hex(0xFFE66D));
     lv_label_set_text(s_kid_label, s_last_kid_name);
     lv_obj_set_style_pad_all(s_kid_label, 8, 0);
     lv_obj_add_flag(s_kid_label, LV_OBJ_FLAG_CLICKABLE);
@@ -247,7 +247,7 @@ static void ui_create_status_bar(void)
 
     /* Sync-in-progress hint (hidden by default) */
     s_sync_label = lv_label_create(s_status_bar);
-    ui_style_label(s_sync_label, font_small, lv_color_hex(0x4ECDC4));
+    ui_style_label(s_sync_label, font_normal, lv_color_hex(0x4ECDC4));
     lv_label_set_text(s_sync_label, "同步中");
     lv_obj_add_flag(s_sync_label, LV_OBJ_FLAG_HIDDEN);
     if (s_landscape) {
