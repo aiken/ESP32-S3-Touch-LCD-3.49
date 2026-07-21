@@ -24,7 +24,7 @@ static const char *TAG = "WIFI";
 #define WIFI_CONNECTED_BIT  BIT0
 #define NTP_RETRY_COUNT     20
 #define RESYNC_INTERVAL_MS  (6 * 3600 * 1000)
-#define COURSE_SYNC_INTERVAL_MS (5 * 60 * 1000)
+#define COURSE_SYNC_INTERVAL_MS (30 * 1000)
 #define HTTP_BUF_SIZE       (32 * 1024)
 #define NVS_NAMESPACE       "cal"
 #define NVS_KEY_TODAY       "today"
