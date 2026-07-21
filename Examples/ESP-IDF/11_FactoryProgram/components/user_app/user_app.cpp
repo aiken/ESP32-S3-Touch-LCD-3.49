@@ -17,6 +17,7 @@
 #include "ble_scan_bsp.h"
 #include "esp_io_expander_tca9554.h"
 #include "user_audio_bsp.h"
+#include "driver/gpio.h"
 
 lv_ui src_ui;
 esp_io_expander_handle_t io_expander = NULL;

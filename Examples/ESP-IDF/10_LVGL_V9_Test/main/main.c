@@ -145,7 +145,7 @@ static void TouchInputReadCallback(lv_indev_t * indev, lv_indev_data_t *indevDat
         if(pointX > EXAMPLE_LCD_H_RES) pointX = EXAMPLE_LCD_H_RES;
         if(pointY > EXAMPLE_LCD_V_RES) pointY = EXAMPLE_LCD_V_RES;
         indevData->point.x = (EXAMPLE_LCD_H_RES - pointX);
-        indevData->point.y = (EXAMPLE_LCD_V_RES - pointY); 
+        indevData->point.y = (EXAMPLE_LCD_V_RES - pointY);
 #else
         if(pointX > EXAMPLE_LCD_V_RES) pointX = EXAMPLE_LCD_V_RES;
         if(pointY > EXAMPLE_LCD_H_RES) pointY = EXAMPLE_LCD_H_RES;
@@ -209,6 +209,7 @@ void app_main(void)
     assert(flush_done_semaphore);
     touch_i2c_master_Init();
     ESP_LOGI(TAG, "Initialize SPI bus");
+#if (EXAMPLE_PIN_NUM_LCD_RST >= 0)
 	gpio_config_t gpio_conf = {};
     gpio_conf.intr_type = GPIO_INTR_DISABLE;
     gpio_conf.mode = GPIO_MODE_OUTPUT;
@@ -216,6 +217,7 @@ void app_main(void)
     gpio_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
     gpio_conf.pull_up_en = GPIO_PULLUP_ENABLE;
     ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_config(&gpio_conf));
+#endif
 
     spi_bus_config_t buscfg = {};
     buscfg.sclk_io_num =  EXAMPLE_PIN_NUM_LCD_PCLK;  
@@ -257,12 +259,16 @@ void app_main(void)
     ESP_LOGI(TAG, "Install panel driver");
     ESP_ERROR_CHECK(esp_lcd_new_panel_axs15231b(panel_io, &panel_config, &panel));
     
+#if (EXAMPLE_PIN_NUM_LCD_RST >= 0)
 	ESP_ERROR_CHECK(gpio_set_level(EXAMPLE_PIN_NUM_LCD_RST,1));
     vTaskDelay(pdMS_TO_TICKS(30));
     ESP_ERROR_CHECK(gpio_set_level(EXAMPLE_PIN_NUM_LCD_RST,0));
     vTaskDelay(pdMS_TO_TICKS(250));
     ESP_ERROR_CHECK(gpio_set_level(EXAMPLE_PIN_NUM_LCD_RST,1));
     vTaskDelay(pdMS_TO_TICKS(30));
+#else
+    vTaskDelay(pdMS_TO_TICKS(100));
+#endif
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel));
 
     /*lvgl port*/

@@ -35,7 +35,7 @@ void touch_i2c_master_Init(void)
   i2c_device_config_t dev_cfg = 
   {
     .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-    .scl_speed_hz = 300000,
+    .scl_speed_hz = 100000,
   };
 
   dev_cfg.device_address = DISP_TOUCH_ADDR;
@@ -67,13 +67,16 @@ uint8_t i2c_writr_buff(i2c_master_dev_handle_t dev_handle,int reg,uint8_t *buf,u
   }
   return ret;
 }
-uint8_t i2c_master_write_read_dev(i2c_master_dev_handle_t dev_handle,uint8_t *writeBuf,uint8_t writeLen,uint8_t *readBuf,uint8_t readLen)
+esp_err_t i2c_master_write_read_dev(i2c_master_dev_handle_t dev_handle,uint8_t *writeBuf,uint8_t writeLen,uint8_t *readBuf,uint8_t readLen)
 {
-  uint8_t ret;
+  esp_err_t ret;
   ret = i2c_master_bus_wait_all_done(user_i2c_port1_handle,i2c_done_pdMS_TICKS);
   if(ret != ESP_OK)
   return ret;
-  ret = i2c_master_transmit_receive(dev_handle,writeBuf,writeLen,readBuf,readLen,i2c_data_pdMS_TICKS);
+  ret = i2c_master_transmit(dev_handle,writeBuf,writeLen,i2c_data_pdMS_TICKS);
+  if(ret != ESP_OK)
+  return ret;
+  ret = i2c_master_receive(dev_handle,readBuf,readLen,i2c_data_pdMS_TICKS);
   return ret;
 }
 uint8_t i2c_read_buff(i2c_master_dev_handle_t dev_handle,int reg,uint8_t *buf,uint8_t len)
