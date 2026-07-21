@@ -409,9 +409,11 @@ static void course_sync_task(void *arg)
 
 esp_err_t wifi_sync_start_time_task(void)
 {
-    if (xTaskCreatePinnedToCore(time_sync_task, "ntp_sync", 4096, NULL, 3, NULL, 0) != pdPASS) {
+    /* Core 1: LVGL saturates core 0 with 75ms render bursts, which starved
+       the TCP stack (ESP_ERR_HTTP_CONNECT). Network tasks must not share it. */
+    if (xTaskCreatePinnedToCore(time_sync_task, "ntp_sync", 4096, NULL, 3, NULL, 1) != pdPASS) {
         return ESP_FAIL;
     }
-    return xTaskCreatePinnedToCore(course_sync_task, "course_sync", 8192, NULL, 3, NULL, 0) == pdPASS
+    return xTaskCreatePinnedToCore(course_sync_task, "course_sync", 8192, NULL, 3, NULL, 1) == pdPASS
            ? ESP_OK : ESP_FAIL;
 }

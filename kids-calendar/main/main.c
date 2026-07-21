@@ -291,33 +291,37 @@ static void example_lvgl_flush_cb(lv_display_t * disp, const lv_area_t * area, u
 #endif
 }
 
+/* Touch is polled in a dedicated 10ms task and cached here, so tap
+   detection is independent of the (slow, 75ms) LVGL render cycle. */
+static volatile uint16_t s_touch_x = 0, s_touch_y = 0;
+static volatile bool s_touch_pressed = false;
+
+static void touch_poll_task(void *arg)
+{
+    uint8_t cmd[11] = {0xb5, 0xab, 0xa5, 0x5a, 0, 0, 0, 0x0e, 0, 0, 0};
+    for (;;) {
+        uint8_t buff[32] = {0};
+        if (i2c_master_write_read_dev(disp_touch_dev_handle, cmd, 11, buff, 32) == ESP_OK
+            && buff[1] > 0 && buff[1] < 5) {
+            uint16_t pointX = (((uint16_t)buff[2] & 0x0f) << 8) | (uint16_t)buff[3];
+            uint16_t pointY = (((uint16_t)buff[4] & 0x0f) << 8) | (uint16_t)buff[5];
+            if (pointX > EXAMPLE_LCD_V_RES) pointX = EXAMPLE_LCD_V_RES;
+            if (pointY > EXAMPLE_LCD_H_RES) pointY = EXAMPLE_LCD_H_RES;
+            s_touch_x = pointY;
+            s_touch_y = (EXAMPLE_LCD_V_RES - pointX);
+            s_touch_pressed = true;
+        } else {
+            s_touch_pressed = false;
+        }
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+}
+
 static void TouchInputReadCallback(lv_indev_t * indev, lv_indev_data_t *indevData)
 {
-    uint8_t read_touchpad_cmd[11] = {0xb5, 0xab, 0xa5, 0x5a, 0x0, 0x0, 0x0, 0x0e,0x0, 0x0, 0x0};
-    uint8_t buff[32] = {0};
-    ESP_ERROR_CHECK_WITHOUT_ABORT(i2c_master_write_read_dev(disp_touch_dev_handle,read_touchpad_cmd,11,buff,32));
-    uint16_t pointX;
-    uint16_t pointY;
-    pointX = (((uint16_t)buff[2] & 0x0f) << 8) | (uint16_t)buff[3];
-    pointY = (((uint16_t)buff[4] & 0x0f) << 8) | (uint16_t)buff[5];
-    //ESP_LOGI("Touch","%d,%d",buff[0],buff[1]);
-    if (buff[1]>0 && buff[1]<5)
-    {
-        indevData->state = LV_INDEV_STATE_PRESSED;
-        /* Always report in the physical (portrait) frame — LVGL 9 rotates
-           indev points itself per lv_display_set_rotation()
-           (see lv_display_rotate_point in lv_indev.c). */
-        if(pointX > EXAMPLE_LCD_V_RES) pointX = EXAMPLE_LCD_V_RES;
-        if(pointY > EXAMPLE_LCD_H_RES) pointY = EXAMPLE_LCD_H_RES;
-        indevData->point.x = pointY;
-        indevData->point.y = (EXAMPLE_LCD_V_RES-pointX);
-        ESP_LOGI("TOUCH", "press x=%d y=%d t=%u", indevData->point.x, indevData->point.y,
-                 (unsigned)(xTaskGetTickCount() * portTICK_PERIOD_MS));
-    }
-    else 
-    {
-        indevData->state = LV_INDEV_STATE_RELEASED;
-    }
+    indevData->point.x = s_touch_x;
+    indevData->point.y = s_touch_y;
+    indevData->state = s_touch_pressed ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
 }
 
 static void example_increase_lvgl_tick(void *arg)
@@ -480,6 +484,8 @@ void app_main(void)
     touch_indev = lv_indev_create();
     lv_indev_set_type(touch_indev, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(touch_indev, TouchInputReadCallback);
+    /* 100Hz touch polling on core 1, fully decoupled from LVGL (core 0) */
+    xTaskCreatePinnedToCore(touch_poll_task, "touch_poll", 4096, NULL, 5, NULL, 1);
 
     esp_timer_create_args_t lvgl_tick_timer_args = {};
     lvgl_tick_timer_args.callback = &example_increase_lvgl_tick;
