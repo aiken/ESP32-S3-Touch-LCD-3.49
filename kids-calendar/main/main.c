@@ -579,6 +579,7 @@ void app_main(void)
         }
 
         struct tm now;
+        ui_show_syncing(wifi_sync_is_syncing());
         if (rtc_get_time(&now) == ESP_OK) {
             if (now.tm_min != last_min) {
                 last_min = now.tm_min;

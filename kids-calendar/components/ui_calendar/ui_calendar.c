@@ -53,6 +53,7 @@ static int s_last_batt_pct = -1;
 static bool s_last_charging = false;
 static int s_now_minutes = -1;   /* current time in minutes, for "进行中" highlight */
 static lv_obj_t *s_kid_label = NULL;
+static lv_obj_t *s_sync_label = NULL;
 static char s_last_kid_name[16] = "--";
 static void (*s_kid_switch_cb)(void) = NULL;
 
@@ -60,25 +61,36 @@ static const char *s_weekday_names[] = {"周日", "周一", "周二", "周三", 
 static const char *s_month_names[] = {"1月", "2月", "3月", "4月", "5月", "6月",
                                       "7月", "8月", "9月", "10月", "11月", "12月"};
 
-/* ---------------- course detail popup ---------------- */
+/* ---------------- course detail popup (fullscreen dismiss layer) ---------------- */
 
+static lv_obj_t *s_detail_layer = NULL;
 static lv_obj_t *s_detail_popup = NULL;
 static lv_obj_t *s_detail_name = NULL;
 static lv_obj_t *s_detail_time = NULL;
 static lv_obj_t *s_detail_meta = NULL;
 static lv_obj_t *s_detail_remind = NULL;
 
-static void ui_on_detail_close(lv_event_t *e)
+static void ui_on_detail_layer_click(lv_event_t *e)
 {
     (void)e;
-    if (s_detail_popup) {
-        lv_obj_add_flag(s_detail_popup, LV_OBJ_FLAG_HIDDEN);
+    if (s_detail_layer) {
+        lv_obj_add_flag(s_detail_layer, LV_OBJ_FLAG_HIDDEN);
     }
 }
 
 static void ui_create_detail_popup(void)
 {
-    s_detail_popup = lv_obj_create(s_root);
+    /* Fullscreen dim layer: tap anywhere outside the card to dismiss */
+    s_detail_layer = lv_obj_create(s_root);
+    lv_obj_set_size(s_detail_layer, s_screen_w, s_screen_h);
+    lv_obj_set_pos(s_detail_layer, 0, 0);
+    lv_obj_set_style_bg_color(s_detail_layer, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_detail_layer, LV_OPA_40, 0);
+    lv_obj_set_style_border_width(s_detail_layer, 0, 0);
+    lv_obj_set_style_pad_all(s_detail_layer, 0, 0);
+    lv_obj_add_event_cb(s_detail_layer, ui_on_detail_layer_click, LV_EVENT_CLICKED, NULL);
+
+    s_detail_popup = lv_obj_create(s_detail_layer);
     lv_obj_set_size(s_detail_popup, s_landscape ? 320 : (s_screen_w - 16),
                     s_landscape ? 140 : 220);
     lv_obj_center(s_detail_popup);
@@ -89,7 +101,6 @@ static void ui_create_detail_popup(void)
     lv_obj_set_style_pad_all(s_detail_popup, 12, 0);
     lv_obj_set_flex_flow(s_detail_popup, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(s_detail_popup, 6, 0);
-    lv_obj_add_event_cb(s_detail_popup, ui_on_detail_close, LV_EVENT_CLICKED, NULL);
 
     s_detail_name = lv_label_create(s_detail_popup);
     ui_style_label(s_detail_name, font_large, lv_color_white());
@@ -105,14 +116,14 @@ static void ui_create_detail_popup(void)
 
     lv_obj_t *hint = lv_label_create(s_detail_popup);
     ui_style_label(hint, font_small, lv_color_hex(0x555566));
-    lv_label_set_text(hint, "点击关闭");
+    lv_label_set_text(hint, "点击空白处关闭");
 
-    lv_obj_add_flag(s_detail_popup, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(s_detail_layer, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void ui_show_course_detail(const course_t *c)
 {
-    if (!c || !s_detail_popup) {
+    if (!c || !s_detail_layer) {
         return;
     }
     lv_label_set_text(s_detail_name, c->name);
@@ -122,8 +133,8 @@ static void ui_show_course_detail(const course_t *c)
                           c->teacher[0] ? c->teacher : "--", c->location[0] ? c->location : "--");
     lv_label_set_text_fmt(s_detail_remind, "提前 %d 分钟提醒", c->remind_before);
     lv_obj_set_style_border_color(s_detail_popup, ui_color_from_hex(c->color), 0);
-    lv_obj_clear_flag(s_detail_popup, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_move_foreground(s_detail_popup);
+    lv_obj_clear_flag(s_detail_layer, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(s_detail_layer);
 }
 static void ui_create_status_bar(void);
 static void ui_create_timeline(void);
@@ -226,12 +237,24 @@ static void ui_create_status_bar(void)
     lv_obj_set_style_text_color(s_batt_charge_label, lv_color_hex(0x4ADE80), 0);
     lv_label_set_text(s_batt_charge_label, "");
 
-    /* Kid profile label (tap to switch 美熹/壮壮) */
+    /* Kid profile label (tap to switch 美熹/壮壮) — padded for a bigger hit area */
     s_kid_label = lv_label_create(s_status_bar);
     ui_style_label(s_kid_label, font_small, lv_color_hex(0xFFE66D));
     lv_label_set_text(s_kid_label, s_last_kid_name);
+    lv_obj_set_style_pad_all(s_kid_label, 8, 0);
     lv_obj_add_flag(s_kid_label, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_event_cb(s_kid_label, ui_on_kid_click, LV_EVENT_CLICKED, NULL);
+
+    /* Sync-in-progress hint (hidden by default) */
+    s_sync_label = lv_label_create(s_status_bar);
+    ui_style_label(s_sync_label, font_small, lv_color_hex(0x4ECDC4));
+    lv_label_set_text(s_sync_label, "同步中");
+    lv_obj_add_flag(s_sync_label, LV_OBJ_FLAG_HIDDEN);
+    if (s_landscape) {
+        lv_obj_align(s_sync_label, LV_ALIGN_CENTER, 0, 0);
+    } else {
+        lv_obj_align(s_sync_label, LV_ALIGN_BOTTOM_MID, 0, 0);
+    }
 
     ui_layout_status_bar();
 }
@@ -315,7 +338,7 @@ void ui_set_orientation(bool landscape)
 
     /* Delete top-level containers (children go with them) and rebuild */
     if (s_reminder_timer) { lv_timer_del(s_reminder_timer); s_reminder_timer = NULL; }
-    if (s_detail_popup)   { lv_obj_del(s_detail_popup);   s_detail_popup = NULL;
+    if (s_detail_layer)   { lv_obj_del(s_detail_layer);   s_detail_layer = NULL; s_detail_popup = NULL;
                             s_detail_name = s_detail_time = s_detail_meta = s_detail_remind = NULL; }
     if (s_status_bar)     { lv_obj_del(s_status_bar);     s_status_bar = NULL; }
     if (s_timeline)       { lv_obj_del(s_timeline);       s_timeline = NULL; }
@@ -324,6 +347,7 @@ void ui_set_orientation(bool landscape)
     s_date_label = s_weekday_label = s_time_label = s_wifi_label = NULL;
     s_batt_icon_label = s_batt_pct_label = s_batt_charge_label = NULL;
     s_kid_label = NULL;
+    s_sync_label = NULL;
 
     ui_create_status_bar();
     ui_create_timeline();
@@ -467,7 +491,7 @@ void ui_show_course_timeline(const course_t *courses, int count)
         lv_obj_set_style_border_color(card, is_now ? color : ui_color_blend(color, lv_color_hex(0x16213E), 100), 0);
         lv_obj_set_style_pad_all(card, 8, 0);
         lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW);
-        lv_obj_add_event_cb(card, ui_on_course_card_click, LV_EVENT_CLICKED, (void *)c);
+        lv_obj_add_event_cb(card, ui_on_course_card_click, LV_EVENT_PRESSED, (void *)c);
 
         lv_obj_t *bar = lv_obj_create(card);
         lv_obj_set_size(bar, 8, card_h - 16);
@@ -656,6 +680,18 @@ void ui_set_kid_label(const char *name)
     }
     if (s_kid_label) {
         lv_label_set_text(s_kid_label, s_last_kid_name);
+    }
+}
+
+void ui_show_syncing(bool on)
+{
+    if (!s_sync_label) {
+        return;
+    }
+    if (on) {
+        lv_obj_clear_flag(s_sync_label, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_sync_label, LV_OBJ_FLAG_HIDDEN);
     }
 }
 

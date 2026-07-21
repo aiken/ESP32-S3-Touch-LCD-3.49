@@ -73,6 +73,7 @@ esp_err_t wifi_sync_init(void)
 
     ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "set mode failed");
     ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &wifi_config), TAG, "set config failed");
+    ESP_RETURN_ON_ERROR(esp_wifi_set_ps(WIFI_PS_NONE), TAG, "set ps failed");  /* stable link for sync */
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "wifi start failed");
 
     ESP_LOGI(TAG, "connecting to %s ...", CONFIG_WIFI_SSID);
@@ -318,6 +319,12 @@ void wifi_sync_toggle_kid(void)
 
 static char *s_fresh_json = NULL;   /* freshest good payload (owned) */
 static uint32_t s_courses_version = 0;
+static volatile bool s_syncing = false;
+
+bool wifi_sync_is_syncing(void)
+{
+    return s_syncing;
+}
 
 static void update_fresh_json(char *json, bool save_cache)
 {
@@ -334,6 +341,7 @@ static void update_fresh_json(char *json, bool save_cache)
 esp_err_t wifi_sync_refresh_courses(void)
 {
     char url[192];
+    s_syncing = true;
 
     /* 1) LAN first */
     snprintf(url, sizeof(url), "%s/api/today?kid=%s", CONFIG_API_LAN_URL, wifi_sync_get_kid());
@@ -347,6 +355,7 @@ esp_err_t wifi_sync_refresh_courses(void)
     }
 
     if (!json) {
+        s_syncing = false;
         return ESP_FAIL;
     }
     int probe_max = 4;
@@ -355,9 +364,11 @@ esp_err_t wifi_sync_refresh_courses(void)
     if (n < 0) {
         ESP_LOGE(TAG, "invalid JSON from server");
         free(json);
+        s_syncing = false;
         return ESP_FAIL;
     }
     update_fresh_json(json, true);
+    s_syncing = false;
     return ESP_OK;
 }
 

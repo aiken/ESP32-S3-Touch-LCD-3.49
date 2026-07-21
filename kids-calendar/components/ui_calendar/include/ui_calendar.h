@@ -30,6 +30,8 @@ void ui_set_sync_callback(void (*cb)(void));
 /* Kid profile label on the status bar; tapping it switches kid */
 void ui_set_kid_label(const char *name);
 void ui_set_kid_switch_callback(void (*cb)(void));
+/* Show/hide the small 同步中 indicator */
+void ui_show_syncing(bool on);
 void ui_set_orientation(bool landscape);
 void ui_show_course_timeline(const course_t *courses, int count);
 void ui_show_month_calendar(int year, int month, int today_day);

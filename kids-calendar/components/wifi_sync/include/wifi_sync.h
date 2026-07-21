@@ -34,6 +34,9 @@ int wifi_sync_get_courses(course_t *out, int max);
 /* Monotonic version counter of the course data (UI watches for changes) */
 uint32_t wifi_sync_courses_version(void);
 
+/* true while a course refresh is in flight (for the 同步中 indicator) */
+bool wifi_sync_is_syncing(void);
+
 /* Force a refresh now (blocking, up to a few seconds) */
 esp_err_t wifi_sync_refresh_courses(void);
 
