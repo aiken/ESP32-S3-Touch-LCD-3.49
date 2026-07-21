@@ -39,8 +39,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
     } else if (base == WIFI_EVENT && id == WIFI_EVENT_STA_DISCONNECTED) {
         s_connected = false;
         xEventGroupClearBits(s_wifi_events, WIFI_CONNECTED_BIT);
-        ESP_LOGW(TAG, "disconnected, reconnecting...");
-        esp_wifi_connect();
+        ESP_LOGW(TAG, "disconnected (driver auto-reconnects)");
+        /* no manual esp_wifi_connect() here: hammering the AP with
+           back-to-back attempts can get the client throttled by it */
     } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *)data;
         s_connected = true;
@@ -69,11 +70,9 @@ esp_err_t wifi_sync_init(void)
     wifi_config_t wifi_config = {};
     strncpy((char *)wifi_config.sta.ssid, CONFIG_WIFI_SSID, sizeof(wifi_config.sta.ssid) - 1);
     strncpy((char *)wifi_config.sta.password, CONFIG_WIFI_PASSWORD, sizeof(wifi_config.sta.password) - 1);
-    wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
 
     ESP_RETURN_ON_ERROR(esp_wifi_set_mode(WIFI_MODE_STA), TAG, "set mode failed");
     ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &wifi_config), TAG, "set config failed");
-    ESP_RETURN_ON_ERROR(esp_wifi_set_ps(WIFI_PS_NONE), TAG, "set ps failed");  /* stable link for sync */
     ESP_RETURN_ON_ERROR(esp_wifi_start(), TAG, "wifi start failed");
 
     ESP_LOGI(TAG, "connecting to %s ...", CONFIG_WIFI_SSID);
