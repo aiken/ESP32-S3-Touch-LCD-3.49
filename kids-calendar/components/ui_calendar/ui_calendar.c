@@ -48,6 +48,7 @@ static char s_last_weekday[8] = "--";
 static char s_last_time[16] = "--:--";
 static bool s_last_wifi = false;
 static int s_last_batt_pct = -1;
+static int s_now_minutes = -1;   /* current time in minutes, for "进行中" highlight */
 
 static const char *s_weekday_names[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
 static const char *s_month_names[] = {"1月", "2月", "3月", "4月", "5月", "6月",
@@ -103,7 +104,7 @@ static void ui_create_status_bar(void)
     lv_label_set_text(s_weekday_label, "--");
 
     s_time_label = lv_label_create(s_status_bar);
-    ui_style_label(s_time_label, font_time, lv_color_white());
+    ui_style_label(s_time_label, &lv_font_montserrat_24, lv_color_white());
     lv_label_set_text(s_time_label, "--:--");
 
     s_wifi_label = lv_label_create(s_status_bar);
@@ -131,7 +132,7 @@ static void ui_create_status_bar(void)
     } else {
         /* Landscape (640x172): single row, battery + wifi left of the clock */
         lv_obj_align(s_date_label, LV_ALIGN_LEFT_MID, 4, 0);
-        lv_obj_align_to(s_weekday_label, s_date_label, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
+        lv_obj_align_to(s_weekday_label, s_date_label, LV_ALIGN_OUT_RIGHT_MID, 16, 0);
         lv_obj_align(s_time_label, LV_ALIGN_RIGHT_MID, -4, 0);
         lv_obj_align_to(s_wifi_label, s_time_label, LV_ALIGN_OUT_LEFT_MID, -10, 0);
         lv_obj_align_to(s_batt_pct_label, s_wifi_label, LV_ALIGN_OUT_LEFT_MID, -6, 0);
@@ -269,6 +270,11 @@ void ui_update_statusbar(const char *date, const char *weekday,
     }
 }
 
+void ui_set_current_time(int hour, int minute)
+{
+    s_now_minutes = (hour >= 0 && minute >= 0) ? hour * 60 + minute : -1;
+}
+
 void ui_update_battery(int pct)
 {
     s_last_batt_pct = pct;
@@ -324,46 +330,75 @@ void ui_show_course_timeline(const course_t *courses, int count)
         return;
     }
 
-    const int card_w = s_landscape ? 150 : 164;
-    const int card_h = s_landscape ? (CONTENT_H - 16) : 86;
+    const int card_w = s_landscape ? 148 : 156;
+    const int card_h = s_landscape ? (CONTENT_H - 12) : 96;
 
     for (int i = 0; i < count; i++) {
         const course_t *c = &courses[i];
         lv_color_t color = ui_color_from_hex(c->color);
 
+        /* "进行中" detection: start <= now < end */
+        bool is_now = false;
+        if (s_now_minutes >= 0) {
+            int sh = 0, sm = 0, eh = 0, em = 0;
+            if (sscanf(c->start_time, "%d:%d", &sh, &sm) == 2 &&
+                sscanf(c->end_time, "%d:%d", &eh, &em) == 2) {
+                int start = sh * 60 + sm, end = eh * 60 + em;
+                is_now = (s_now_minutes >= start && s_now_minutes < end);
+            }
+        }
+
         lv_obj_t *card = lv_obj_create(s_timeline);
         lv_obj_set_size(card, card_w, card_h);
-        ui_style_card(card);
+        lv_obj_set_style_bg_color(card, ui_color_blend(color, lv_color_hex(0x16213E), 40), 0);
+        lv_obj_set_style_bg_opa(card, LV_OPA_COVER, 0);
+        lv_obj_set_style_radius(card, 12, 0);
+        lv_obj_set_style_border_width(card, is_now ? 2 : 1, 0);
+        lv_obj_set_style_border_color(card, is_now ? color : ui_color_blend(color, lv_color_hex(0x16213E), 100), 0);
+        lv_obj_set_style_pad_all(card, 8, 0);
         lv_obj_set_flex_flow(card, LV_FLEX_FLOW_ROW);
         lv_obj_add_event_cb(card, ui_on_course_card_click, LV_EVENT_CLICKED, (void *)c);
 
         lv_obj_t *bar = lv_obj_create(card);
-        lv_obj_set_size(bar, 6, card_h - 12);
+        lv_obj_set_size(bar, 8, card_h - 16);
         ui_style_card_bar(bar, color);
-        lv_obj_set_style_margin_right(bar, 6, 0);
+        lv_obj_set_style_margin_right(bar, 8, 0);
 
         lv_obj_t *info = lv_obj_create(card);
-        lv_obj_set_size(info, card_w - 24, card_h - 12);
+        lv_obj_set_size(info, card_w - 40, card_h - 16);
         lv_obj_set_style_bg_opa(info, LV_OPA_TRANSP, 0);
         lv_obj_set_style_border_width(info, 0, 0);
         lv_obj_set_style_pad_all(info, 0, 0);
+        lv_obj_set_style_pad_row(info, 2, 0);
         lv_obj_set_flex_flow(info, LV_FLEX_FLOW_COLUMN);
 
         lv_obj_t *name = lv_label_create(info);
-        ui_style_label(name, font_normal, lv_color_white());
+        ui_style_label(name, font_large, lv_color_white());
         lv_label_set_text(name, c->name);
 
         lv_obj_t *time = lv_label_create(info);
-        ui_style_label(time, font_small, lv_color_hex(0xCCCCCC));
+        ui_style_label(time, font_normal, ui_color_brighten(color, 110));
         char time_buf[32];
         snprintf(time_buf, sizeof(time_buf), "%s - %s", c->start_time, c->end_time);
         lv_label_set_text(time, time_buf);
 
         lv_obj_t *teacher = lv_label_create(info);
-        ui_style_label(teacher, font_small, lv_color_hex(0xAAAAAA));
+        ui_style_label(teacher, font_small, lv_color_hex(0x9AA0B4));
         char teacher_buf[48];
         snprintf(teacher_buf, sizeof(teacher_buf), "%s · %s", c->teacher, c->location);
         lv_label_set_text(teacher, teacher_buf);
+
+        if (is_now) {
+            lv_obj_t *badge = lv_label_create(card);
+            ui_style_label(badge, font_small, lv_color_white());
+            lv_label_set_text(badge, "进行中");
+            lv_obj_set_style_bg_color(badge, color, 0);
+            lv_obj_set_style_bg_opa(badge, LV_OPA_COVER, 0);
+            lv_obj_set_style_radius(badge, 8, 0);
+            lv_obj_set_style_pad_all(badge, 3, 0);
+            lv_obj_add_flag(badge, LV_OBJ_FLAG_IGNORE_LAYOUT); /* not a flex item */
+            lv_obj_align(badge, LV_ALIGN_TOP_RIGHT, -2, -2);
+        }
     }
 }
 

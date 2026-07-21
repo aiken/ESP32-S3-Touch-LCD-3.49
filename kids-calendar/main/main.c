@@ -541,6 +541,8 @@ void app_main(void)
                 if (example_lvgl_lock(100)) {
                     ui_update_statusbar(date_buf, weekday, time_buf, wifi_sync_is_connected());
                     ui_update_battery(battery_get_percent());
+                    ui_set_current_time(now.tm_hour, now.tm_min);
+                    ui_show_course_timeline(s_demo_courses, s_demo_course_count);
                     example_lvgl_unlock();
                 }
             }

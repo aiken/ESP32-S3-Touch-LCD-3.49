@@ -16,8 +16,10 @@ const lv_color_t course_color_purple = LV_COLOR_MAKE(0xAA, 0x96, 0xDA);
    demo data (语/术/王/李/张), so they showed as boxes. */
 LV_FONT_DECLARE(lv_font_chinese_14);
 LV_FONT_DECLARE(lv_font_chinese_16);
+LV_FONT_DECLARE(lv_font_chinese_20);
 const lv_font_t *font_small  = &lv_font_chinese_14;
 const lv_font_t *font_normal = &lv_font_chinese_16;
+const lv_font_t *font_large  = &lv_font_chinese_20;
 const lv_font_t *font_time   = &lv_font_montserrat_20;
 
 lv_color_t ui_color_from_hex(const char *hex)
@@ -32,6 +34,21 @@ lv_color_t ui_color_from_hex(const char *hex)
     uint8_t b = rgb & 0xFF;
 
     return lv_color_make(r, g, b);
+}
+
+lv_color_t ui_color_blend(lv_color_t fg, lv_color_t bg, uint8_t ratio)
+{
+    uint16_t inv = 255 - ratio;
+    return lv_color_make(
+        (uint8_t)((fg.red * ratio + bg.red * inv) / 255),
+        (uint8_t)((fg.green * ratio + bg.green * inv) / 255),
+        (uint8_t)((fg.blue * ratio + bg.blue * inv) / 255));
+}
+
+lv_color_t ui_color_brighten(lv_color_t c, uint8_t ratio)
+{
+    lv_color_t white = lv_color_white();
+    return ui_color_blend(white, c, ratio);
 }
 
 void ui_style_status_bar(lv_obj_t *obj)
