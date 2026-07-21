@@ -333,10 +333,6 @@ static void example_lvgl_port_task(void *arg)
 
 void app_main(void)
 {
-    /* Backlight: leave at board default (on). The factory demo does not drive
-       the backlight pin at all; the PWM init (GPIO8, LEDC 50kHz) is suspected
-       of turning it off on this board. Re-enable lcd_bl_pwm_bsp_init() only
-       after verifying polarity on hardware. */
     flush_done_semaphore = xSemaphoreCreateBinary();
     assert(flush_done_semaphore);
     touch_i2c_master_Init();
@@ -390,7 +386,12 @@ void app_main(void)
     
     ESP_LOGI(TAG, "Install panel driver");
     ESP_ERROR_CHECK(esp_lcd_new_panel_axs15231b(panel_io, &panel_config, &panel));
-    
+
+    /* Cold-boot timing: the panel needs time to power up after a cold
+       power-on. Demo 8 reaches panel init later (I2C/SensorLib init first)
+       and always works; kids-calendar used to get here in <100ms and the
+       init commands were lost -> black screen with a running app. */
+    vTaskDelay(pdMS_TO_TICKS(300));
 #if (EXAMPLE_PIN_NUM_LCD_RST >= 0)
 	ESP_ERROR_CHECK(gpio_set_level(EXAMPLE_PIN_NUM_LCD_RST,1));
     vTaskDelay(pdMS_TO_TICKS(30));
@@ -469,7 +470,8 @@ void app_main(void)
     /* Initialize RTC after UI is up */
     ESP_ERROR_CHECK(rtc_init());
 
-    /* Battery voltage measurement (TCA9554 + ADC on the RTC I2C bus) */
+    /* Battery voltage measurement (ADC1_CH3 only; no TCA9554 access — those
+       writes kill the panel on this board) */
     ESP_ERROR_CHECK_WITHOUT_ABORT(battery_bsp_init());
 
     /* IMU for auto-rotation (same I2C bus as RTC) */

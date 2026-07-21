@@ -71,6 +71,8 @@ There are **no** `pyproject.toml`, `package.json`, or `Cargo.toml` files. All de
 | Display | AXS15231B over QSPI (SPI3_HOST, 40 MHz), driver `espressif/esp_lcd_axs15231b`; native 172×640, RGB565 |
 | Touch | AXS15231B built-in touch over raw I2C at address `0x3B` (GPIO17/18), polled 11-byte command sequence |
 | RTC | PCF85063 over I2C (GPIO47/48), `pcf85063_rtc` component |
+| IMU | QMI8658 accelerometer over I2C (same bus as RTC, addr 0x6B), `qmi8658_imu`; used for auto portrait/landscape switching |
+| Battery | Voltage via ADC1_CH3 (GPIO4), 3:1 divider, `battery_bsp`; percent shown in status bar |
 | Backlight | PWM on GPIO42 via `lcd_bl_pwm_bsp` |
 | Fonts | Montserrat 20 (clock) + custom `lv_font_chinese_14/16` (NotoSansSC, ASCII + UI-specific CJK glyphs, plain bitmap) for all other text; the built-in Source Han Sans CJK fonts are still enabled in Kconfig but unused by the UI (they lack several needed glyphs) |
 
@@ -84,7 +86,7 @@ See `Examples/ESP-IDF/AGENTS.md` for the full table. In short: 11 self-contained
 
 ### `main/main.c` — entry point and LVGL porting layer
 
-`app_main()` does, in order: backlight PWM init → touch I2C init → QSPI bus + AXS15231B panel install → LVGL init (display, flush callback, double PSRAM buffers, `LV_DISPLAY_RENDER_MODE_FULL`) → touch input device → LVGL tick timer (5 ms) → LVGL handler task (mutex-protected `lv_timer_handler()`, pinned to core 0) → UI setup (`ui_init`, demo course timeline, month calendar) → USB screenshot registration → RTC init and a **temporary hard-coded default time** (NTP sync planned, not implemented) → main loop that refreshes the status bar once per minute.
+`app_main()` does, in order: touch I2C init → QSPI bus + AXS15231B panel install (300 ms pre-init delay + GPIO21 reset pulse) → LVGL init (display, flush callback with RGB565 byte swap, double PSRAM buffers, `LV_DISPLAY_RENDER_MODE_FULL`) → touch input device → LVGL tick timer (5 ms) → LVGL handler task (mutex-protected `lv_timer_handler()`, pinned to core 0) → UI setup (`ui_init`, demo course timeline, month calendar) → USB screenshot registration (+LVGL-lock hooks) and command task → RTC init and a **temporary hard-coded default time** (NTP sync planned, not implemented) → battery ADC init → IMU init + orientation task (rotates UI on device flip) → main loop that refreshes the status bar and battery once per minute.
 
 The flush callback copies rotated/full frames through a small DMA buffer (`trans_buf_1`) in `LVGL_SPIRAM_BUFF_LEN / LVGL_DMA_BUFF_LEN` chunks, synchronized with `flush_done_semaphore`. Touch coordinates are mapped differently depending on `Rotated` in `user_config.h` (currently `USER_DISP_ROT_NONO`).
 
@@ -97,10 +99,12 @@ The single source of truth for: QSPI LCD pins, display resolution (172×640), DM
 | Component | State | Responsibility |
 |---|---|---|
 | `i2c_bsp` | Used | Shared I2C bus init (touch bus, `disp_touch_dev_handle`) |
-| `lcd_bl_pwm_bsp` | Used | Backlight PWM (`lcd_bl_pwm_bsp_init`, `setUpduty`, `LCD_PWM_MODE_*`) |
-| `pcf85063_rtc` | Used | PCF85063 driver: `rtc_init`, `rtc_set_time`, `rtc_get_time` |
-| `ui_calendar` | Used | All screens: status bar, course timeline, month calendar, reminders, styles, CJK fonts, plus `ui_screenshot.c` |
-| `usb_screenshot` | Used | Dumps the RGB565 frame buffer over USB-Serial-JTAG (native USB, `/dev/tty.usbmodem*`) for AI-assisted visual debugging; **on-demand** — sends one frame when it receives the `screenshot` command |
+| `lcd_bl_pwm_bsp` | Present, **not called** | Backlight PWM — disabled: on this board the backlight needs no driving (see pitfall §10.8); calling it with the wrong pin kept the screen black |
+| `pcf85063_rtc` | Used | PCF85063 driver: `rtc_init`, `rtc_set_time`, `rtc_get_time`; owns the RTC I2C bus (I2C_NUM_0) and exports it via `pcf85063_get_bus()` for IMU/other devices |
+| `battery_bsp` | Used | Battery voltage/percent: ADC1_CH3 (GPIO4), 3:1 divider, curve-fitting calibration. **No TCA9554 access** — writing it kills the panel on this board |
+| `qmi8658_imu` | Used | Pure-C QMI8658 accelerometer (addr 0x6B, on RTC I2C bus); `imu_init`, `imu_read_accel` |
+| `ui_calendar` | Used | All screens: status bar (incl. battery icon/percent), course timeline, month calendar, reminders, styles, CJK fonts, `ui_set_orientation()` for portrait/landscape rebuild, plus `ui_screenshot.c` |
+| `usb_screenshot` | Used | Dumps the RGB565 frame buffer over USB-Serial-JTAG (native USB, `/dev/tty.usbmodem*`) for AI-assisted visual debugging; **on-demand** — sends one frame when it receives the `screenshot` command; frame grab runs under the LVGL mutex + `lv_refr_now()` (no tearing) |
 | `screenshot_server` | Written, **not wired in** | HTTP server serving the frame buffer as BMP (`/screen`) for Wi-Fi-based screenshot debugging |
 | `wifi_sync` | **Stub** | Empty `include/` dir only; planned Wi-Fi/NTP/API course sync (Kconfig options already exist: `WIFI_SSID`, `API_HOST`, `NTP_SERVER`, `TIMEZONE_OFFSET`, ...) |
 
@@ -184,6 +188,9 @@ Manual only: `idf.py flash`. There is no OTA (the partition table has a single 8
 2. **V1 vs V2 pinout** — `kids-calendar` and `10_LVGL_V9_Test` use the V2 pinout; most other ESP-IDF examples use V1. Never copy `user_config.h` across without checking.
 3. **LVGL 8 vs LVGL 9** — APIs are incompatible; `kids-calendar` is LVGL 9.
 4. **CJK text** — Chinese strings only render if the glyphs exist in `lv_font_chinese_14/16` (ASCII 0x20–0x7E + a fixed CJK symbol set incl. `·` U+00B7); missing glyphs show as boxes or nothing. When adding UI text, check coverage and regenerate the fonts if needed (command in §4). Also verify non-ASCII, non-CJK chars (like `·`) — they are easy to miss.
-5. **Screenshot channel is USB-Serial-JTAG, not UART0** — the frame dump goes over the native USB CDC port (`/dev/cu.usbmodem*`), on-demand only (send the `screenshot` command to trigger one frame). Logs share the same channel, so the PC receiver resyncs on `FB_START`. Don't send screenshots over `UART_NUM_0` — that port isn't wired to the Mac.
+5. **Screenshot channel is USB-Serial-JTAG, not UART0** — the frame dump goes over the native USB CDC port (`/dev/cu.usbmodem*`), on-demand only (send the `screenshot` command to trigger one frame). Logs share the same channel, so the PC receiver resyncs on `FB_START`. Don't send screenshots over `UART_NUM_0` — that port isn't wired to the Mac. The frame buffer is **big-endian** RGB565 (flush does `lv_draw_sw_rgb565_swap`); the receiver decodes accordingly and upscales ×3 nearest-neighbor (`--scale N`).
 6. **After `idf.py flash`, power-cycle the board** — on this board's USB-Serial-JTAG port, esptool's "hard reset" leaves the chip in download mode (`waiting for download`), so the freshly flashed app does not run until the USB cable is replugged. Also avoid asserting DTR/RTS from host tools: those lines feed the ROM's reset/boot-mode emulation. Use `/dev/cu.usbmodem*`, not `/dev/tty.usbmodem*` (writes on `tty.*` can block).
-7. **Stub components** — `wifi_sync` (and `screenshot_server` integration) are unfinished; Kconfig options for Wi-Fi/API/NTP exist but nothing consumes them yet.
+7. **Do NOT write the TCA9554** — the 01_ADC_Test (V1) pattern of pulling EXIO1 low as "battery measure enable" **kills the panel on this board** (black screen, app still alive). Battery voltage works with plain ADC1_CH3 reads, no expander involvement. `battery_bsp` deliberately does no TCA9554 I/O.
+8. **Backlight needs no driving on this board** — the vendor factory/demo programs never touch the backlight pin and the screen stays lit. Earlier "V2" pinout notes (BK=GPIO42 PWM, LCD_RST via TCA9554 EXIO5) were wrong here: `user_config.h` uses BK=GPIO8 (unused), LCD_RST=GPIO21 direct, plus a 300 ms pre-init delay for cold-boot panel readiness.
+9. **Panel wants big-endian RGB565** — keep `lv_draw_sw_rgb565_swap()` in the flush callback; removing it makes physical colors wrong (the demo-8 example without swap only *looks* acceptable at a glance). The screenshot receiver decodes big-endian to match.
+10. **Stub components** — `wifi_sync` (and `screenshot_server` integration) are unfinished; Kconfig options for Wi-Fi/API/NTP exist but nothing consumes them yet.

@@ -50,11 +50,10 @@ static esp_err_t tca9554_clear_bit(uint8_t reg, uint8_t mask)
 
 esp_err_t battery_bsp_init(void)
 {
-    /* EXIO1: output, low (enable battery voltage divider) */
-    ESP_RETURN_ON_ERROR(tca9554_clear_bit(TCA9554_REG_OUTPUT, TCA9554_EXIO1_BIT),
-                        TAG, "TCA9554 output reg failed");
-    ESP_RETURN_ON_ERROR(tca9554_clear_bit(TCA9554_REG_CONFIG, TCA9554_EXIO1_BIT),
-                        TAG, "TCA9554 config reg failed");
+    /* NOTE: no TCA9554 access here. The 01_ADC_Test example pulls EXIO1 low
+       as "battery measure enable" (V1 hardware), but on this board writing
+       the TCA9554 output/config registers kills the panel (black screen).
+       The voltage divider on GPIO4 (ADC1_CH3) reads fine without it. */
 
     adc_oneshot_unit_init_cfg_t init_config = {
         .unit_id = BATT_ADC_UNIT,
