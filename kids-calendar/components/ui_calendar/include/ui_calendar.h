@@ -27,6 +27,9 @@ void ui_update_battery(int pct, bool charging);
 void ui_set_current_time(int hour, int minute);
 /* Register a callback fired when the status bar is tapped (manual sync) */
 void ui_set_sync_callback(void (*cb)(void));
+/* Kid profile label on the status bar; tapping it switches kid */
+void ui_set_kid_label(const char *name);
+void ui_set_kid_switch_callback(void (*cb)(void));
 void ui_set_orientation(bool landscape);
 void ui_show_course_timeline(const course_t *courses, int count);
 void ui_show_month_calendar(int year, int month, int today_day);

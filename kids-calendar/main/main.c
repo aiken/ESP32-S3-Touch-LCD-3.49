@@ -84,13 +84,26 @@ static course_t s_courses[MAX_COURSES];
 static uint32_t s_courses_ver = 0;
 static volatile bool s_sync_requested = false;
 
+static const char *TAG = "example";
+
 static void on_sync_request(void)
 {
     s_sync_requested = true;
 }
 
+static const char *kid_display_name(const char *id)
+{
+    return (id && strcmp(id, "zhuangzhuang") == 0) ? "壮壮" : "美熹";
+}
 
-static const char *TAG = "example";
+static void on_kid_switch(void)
+{
+    wifi_sync_toggle_kid();
+    ESP_LOGI(TAG, "kid -> %s", wifi_sync_get_kid());
+    ui_set_kid_label(kid_display_name(wifi_sync_get_kid()));
+    s_sync_requested = true;   /* refresh courses for the new kid */
+}
+
 
 static SemaphoreHandle_t lvgl_mux = NULL;   
 static SemaphoreHandle_t flush_done_semaphore = NULL; 
@@ -540,6 +553,8 @@ void app_main(void)
             example_lvgl_unlock();
         }
         ui_set_sync_callback(on_sync_request);
+        ui_set_kid_switch_callback(on_kid_switch);
+        ui_set_kid_label(kid_display_name(wifi_sync_get_kid()));
     }
 
     /* Main loop: update status bar only when minute changes to avoid flicker */

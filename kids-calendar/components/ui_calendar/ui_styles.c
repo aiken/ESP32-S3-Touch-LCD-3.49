@@ -1,6 +1,7 @@
 #include "ui_styles.h"
 
 #include <stdlib.h>
+#include <string.h>
 #include "lvgl.h"
 #include "esp_log.h"
 
@@ -11,16 +12,36 @@ const lv_color_t course_color_yellow = LV_COLOR_MAKE(0xFF, 0xE6, 0x6D);
 const lv_color_t course_color_blue   = LV_COLOR_MAKE(0x4A, 0x90, 0xD9);
 const lv_color_t course_color_purple = LV_COLOR_MAKE(0xAA, 0x96, 0xDA);
 
-/* Use custom NotoSansSC fonts (ASCII + the CJK chars used by the UI).
-   The built-in Source Han Sans CJK fonts lack several glyphs used by the
-   demo data (语/术/王/李/张), so they showed as boxes. */
+/* Use custom NotoSansSC fonts (ASCII + the CJK chars used by the UI) with
+   the built-in Source Han Sans fonts as LVGL fallback chain — arbitrary
+   course-name characters (like 口) resolve through it. */
 LV_FONT_DECLARE(lv_font_chinese_14);
 LV_FONT_DECLARE(lv_font_chinese_16);
 LV_FONT_DECLARE(lv_font_chinese_20);
-const lv_font_t *font_small  = &lv_font_chinese_14;
-const lv_font_t *font_normal = &lv_font_chinese_16;
-const lv_font_t *font_large  = &lv_font_chinese_20;
+
+static lv_font_t s_font_small_fb;
+static lv_font_t s_font_normal_fb;
+static lv_font_t s_font_large_fb;
+
+const lv_font_t *font_small;
+const lv_font_t *font_normal;
+const lv_font_t *font_large;
 const lv_font_t *font_time   = &lv_font_montserrat_20;
+
+void ui_styles_init_fonts(void)
+{
+    memcpy(&s_font_small_fb, &lv_font_chinese_14, sizeof(lv_font_t));
+    s_font_small_fb.fallback = &lv_font_source_han_sans_sc_14_cjk;
+    font_small = &s_font_small_fb;
+
+    memcpy(&s_font_normal_fb, &lv_font_chinese_16, sizeof(lv_font_t));
+    s_font_normal_fb.fallback = &lv_font_source_han_sans_sc_16_cjk;
+    font_normal = &s_font_normal_fb;
+
+    memcpy(&s_font_large_fb, &lv_font_chinese_20, sizeof(lv_font_t));
+    s_font_large_fb.fallback = &lv_font_source_han_sans_sc_16_cjk;
+    font_large = &s_font_large_fb;
+}
 
 lv_color_t ui_color_from_hex(const char *hex)
 {

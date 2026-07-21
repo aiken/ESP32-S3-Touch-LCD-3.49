@@ -275,6 +275,47 @@ static char *cache_load(void)
     return buf;
 }
 
+/* ---------------- active kid profile (NVS persisted) ---------------- */
+
+#define NVS_KEY_KID  "kid"
+static char s_kid[16] = "";
+
+const char *wifi_sync_get_kid(void)
+{
+    if (s_kid[0] == '\0') {
+        nvs_handle_t h;
+        if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) == ESP_OK) {
+            size_t len = sizeof(s_kid);
+            nvs_get_str(h, NVS_KEY_KID, s_kid, &len);
+            nvs_close(h);
+        }
+        if (strcmp(s_kid, "meixi") != 0 && strcmp(s_kid, "zhuangzhuang") != 0) {
+            strncpy(s_kid, CONFIG_KID_PROFILE, sizeof(s_kid) - 1);
+        }
+    }
+    return s_kid;
+}
+
+void wifi_sync_set_kid(const char *kid)
+{
+    if (!kid || (strcmp(kid, "meixi") != 0 && strcmp(kid, "zhuangzhuang") != 0)) {
+        return;
+    }
+    strncpy(s_kid, kid, sizeof(s_kid) - 1);
+    s_kid[sizeof(s_kid) - 1] = '\0';
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_str(h, NVS_KEY_KID, s_kid);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+}
+
+void wifi_sync_toggle_kid(void)
+{
+    wifi_sync_set_kid(strcmp(wifi_sync_get_kid(), "meixi") == 0 ? "zhuangzhuang" : "meixi");
+}
+
 static char *s_fresh_json = NULL;   /* freshest good payload (owned) */
 static uint32_t s_courses_version = 0;
 
@@ -295,13 +336,13 @@ esp_err_t wifi_sync_refresh_courses(void)
     char url[192];
 
     /* 1) LAN first */
-    snprintf(url, sizeof(url), "%s/api/today?kid=%s", CONFIG_API_LAN_URL, CONFIG_KID_PROFILE);
+    snprintf(url, sizeof(url), "%s/api/today?kid=%s", CONFIG_API_LAN_URL, wifi_sync_get_kid());
     char *json = http_get(url);
 
     /* 2) Cloudflare fallback */
     if (!json && strlen(CONFIG_API_CLOUD_URL) > 0) {
         ESP_LOGI(TAG, "LAN fetch failed, trying cloud URL");
-        snprintf(url, sizeof(url), "%s/api/today?kid=%s", CONFIG_API_CLOUD_URL, CONFIG_KID_PROFILE);
+        snprintf(url, sizeof(url), "%s/api/today?kid=%s", CONFIG_API_CLOUD_URL, wifi_sync_get_kid());
         json = http_get(url);
     }
 

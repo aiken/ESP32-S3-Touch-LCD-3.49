@@ -33,6 +33,9 @@ void ui_style_card_bar(lv_obj_t *obj, lv_color_t color);
 void ui_style_label(lv_obj_t *obj, const lv_font_t *font, lv_color_t color);
 void ui_style_scroll_container(lv_obj_t *obj);
 
+/* Init the font pointers (custom fonts + Source Han fallback chain) */
+void ui_styles_init_fonts(void);
+
 /* Debug */
 void verify_font(void);
 

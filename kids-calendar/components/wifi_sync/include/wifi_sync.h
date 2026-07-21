@@ -22,6 +22,11 @@ bool wifi_sync_is_connected(void);
 /* Connected AP's SSID into buf (false when not connected) */
 bool wifi_sync_get_ssid(char *buf, size_t len);
 
+/* Active kid profile ("meixi" / "zhuangzhuang"), persisted in NVS */
+const char *wifi_sync_get_kid(void);
+void wifi_sync_set_kid(const char *kid);
+void wifi_sync_toggle_kid(void);
+
 /* Today's courses from the freshest successful server fetch.
    Returns course count (>=0), or -1 if nothing was ever fetched. */
 int wifi_sync_get_courses(course_t *out, int max);

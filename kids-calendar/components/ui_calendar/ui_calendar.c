@@ -52,6 +52,9 @@ static char s_last_wifi_text[24] = "WiFi";
 static int s_last_batt_pct = -1;
 static bool s_last_charging = false;
 static int s_now_minutes = -1;   /* current time in minutes, for "进行中" highlight */
+static lv_obj_t *s_kid_label = NULL;
+static char s_last_kid_name[16] = "--";
+static void (*s_kid_switch_cb)(void) = NULL;
 
 static const char *s_weekday_names[] = {"周日", "周一", "周二", "周三", "周四", "周五", "周六"};
 static const char *s_month_names[] = {"1月", "2月", "3月", "4月", "5月", "6月",
@@ -65,11 +68,14 @@ static void ui_create_reminder_popup(void);
 static void ui_on_content_gesture(lv_event_t *e);
 static void ui_on_status_bar_click(lv_event_t *e);
 static void ui_on_course_card_click(lv_event_t *e);
+static void ui_on_kid_click(lv_event_t *e);
 
 
 esp_err_t ui_init(void)
 {
     ESP_LOGI(TAG, "Initializing UI (%dx%d)", s_screen_w, s_screen_h);
+
+    ui_styles_init_fonts();
 
     s_root = lv_screen_active();
     lv_obj_set_style_bg_color(s_root, lv_color_hex(0x101010), 0);
@@ -96,6 +102,7 @@ static void ui_layout_status_bar(void)
         /* Portrait (172x640): top row date+weekday+clock, bottom row batt+wifi */
         lv_obj_align(s_date_label, LV_ALIGN_LEFT_MID, 4, -8);
         lv_obj_align_to(s_weekday_label, s_date_label, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
+        lv_obj_align_to(s_kid_label, s_weekday_label, LV_ALIGN_OUT_RIGHT_MID, 10, 0);
         lv_obj_align(s_time_label, LV_ALIGN_RIGHT_MID, -4, -8);
         lv_obj_align(s_wifi_label, LV_ALIGN_BOTTOM_RIGHT, -4, 0);
         lv_obj_align(s_batt_icon_label, LV_ALIGN_BOTTOM_LEFT, 4, 0);
@@ -105,6 +112,7 @@ static void ui_layout_status_bar(void)
         /* Landscape (640x172): single row, battery + wifi left of the clock */
         lv_obj_align(s_date_label, LV_ALIGN_LEFT_MID, 4, 0);
         lv_obj_align_to(s_weekday_label, s_date_label, LV_ALIGN_OUT_RIGHT_MID, 16, 0);
+        lv_obj_align_to(s_kid_label, s_weekday_label, LV_ALIGN_OUT_RIGHT_MID, 12, 0);
         lv_obj_align(s_time_label, LV_ALIGN_RIGHT_MID, -4, 0);
         lv_obj_align_to(s_wifi_label, s_time_label, LV_ALIGN_OUT_LEFT_MID, -14, 0);
         lv_obj_align_to(s_batt_pct_label, s_wifi_label, LV_ALIGN_OUT_LEFT_MID, -12, 0);
@@ -152,6 +160,13 @@ static void ui_create_status_bar(void)
     lv_obj_set_style_text_font(s_batt_charge_label, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(s_batt_charge_label, lv_color_hex(0x4ADE80), 0);
     lv_label_set_text(s_batt_charge_label, "");
+
+    /* Kid profile label (tap to switch 美熹/壮壮) */
+    s_kid_label = lv_label_create(s_status_bar);
+    ui_style_label(s_kid_label, font_small, lv_color_hex(0xFFE66D));
+    lv_label_set_text(s_kid_label, s_last_kid_name);
+    lv_obj_add_flag(s_kid_label, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(s_kid_label, ui_on_kid_click, LV_EVENT_CLICKED, NULL);
 
     ui_layout_status_bar();
 }
@@ -243,6 +258,7 @@ void ui_set_orientation(bool landscape)
     if (s_reminder_popup) { lv_obj_del(s_reminder_popup); s_reminder_popup = NULL; }
     s_date_label = s_weekday_label = s_time_label = s_wifi_label = NULL;
     s_batt_icon_label = s_batt_pct_label = s_batt_charge_label = NULL;
+    s_kid_label = NULL;
 
     ui_create_status_bar();
     ui_create_timeline();
@@ -568,6 +584,31 @@ static void (*s_sync_request_cb)(void) = NULL;
 void ui_set_sync_callback(void (*cb)(void))
 {
     s_sync_request_cb = cb;
+}
+
+void ui_set_kid_switch_callback(void (*cb)(void))
+{
+    s_kid_switch_cb = cb;
+}
+
+void ui_set_kid_label(const char *name)
+{
+    if (name) {
+        strncpy(s_last_kid_name, name, sizeof(s_last_kid_name) - 1);
+        s_last_kid_name[sizeof(s_last_kid_name) - 1] = '\0';
+    }
+    if (s_kid_label) {
+        lv_label_set_text(s_kid_label, s_last_kid_name);
+    }
+}
+
+static void ui_on_kid_click(lv_event_t *e)
+{
+    (void)e;
+    ESP_LOGI(TAG, "Kid label tapped: switch kid");
+    if (s_kid_switch_cb) {
+        s_kid_switch_cb();
+    }
 }
 
 static void ui_on_status_bar_click(lv_event_t *e)
