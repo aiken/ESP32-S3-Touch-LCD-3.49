@@ -12,13 +12,18 @@ static const char *TAG = "IMU";
 
 #define QMI8658_ADDR        0x6B
 #define QMI8658_REG_WHOAMI  0x00
+#define QMI8658_REG_CTRL1   0x02
 #define QMI8658_REG_CTRL2   0x03
+#define QMI8658_REG_CTRL3   0x04
 #define QMI8658_REG_CTRL7   0x08
+#define QMI8658_REG_CTRL8   0x09
 #define QMI8658_REG_AX_L    0x35
+#define QMI8658_REG_RESET   0x60
 #define QMI8658_WHOAMI_ID   0x05
+#define QMI8658_REG_RESET_DEFAULT 0xB0
 
-/* CTRL2: aFS[6:4]=001 (±4g), aODR[3:0]=1101 (low-power 21Hz, accel-only) */
-#define QMI8658_CTRL2_VAL   0x1D
+/* CTRL2: aFS[6:4]=001 (±4g), aODR[3:0]=0011 (1000Hz, same as vendor demo) */
+#define QMI8658_CTRL2_VAL   0x13
 /* CTRL7: bit0 = aEN (accelerometer enable) */
 #define QMI8658_CTRL7_VAL   0x01
 
@@ -32,6 +37,7 @@ static esp_err_t imu_write_reg(uint8_t reg, uint8_t val)
 
 static esp_err_t imu_read_regs(uint8_t reg, uint8_t *buf, size_t len)
 {
+    /* Same combined transaction the vendor example uses */
     return i2c_master_transmit_receive(s_imu_dev, &reg, 1, buf, len, pdMS_TO_TICKS(100));
 }
 
@@ -43,10 +49,19 @@ esp_err_t imu_init(void)
     i2c_device_config_t dev_config = {
         .dev_addr_length = I2C_ADDR_BIT_LEN_7,
         .device_address = QMI8658_ADDR,
-        .scl_speed_hz = 400000,
+        .scl_speed_hz = 300000,  /* match vendor example; 400kHz reads garbage */
     };
     ESP_RETURN_ON_ERROR(i2c_master_bus_add_device(bus, &dev_config, &s_imu_dev),
                         TAG, "IMU device add failed");
+
+    /* Follow the SensorLib init sequence: soft reset first */
+    ESP_RETURN_ON_ERROR(imu_write_reg(QMI8658_REG_RESET, QMI8658_REG_RESET_DEFAULT), TAG, "reset failed");
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    /* CTRL1 bit6 (ADDR_AI): enable register address auto-increment.
+       Without it, multi-byte reads return the same word repeatedly
+       (x == y == z garbage). SensorLib sets this right after reset. */
+    ESP_RETURN_ON_ERROR(imu_write_reg(QMI8658_REG_CTRL1, 0x40), TAG, "CTRL1 failed");
 
     uint8_t whoami = 0;
     ESP_RETURN_ON_ERROR(imu_read_regs(QMI8658_REG_WHOAMI, &whoami, 1), TAG, "WHOAMI read failed");
@@ -55,8 +70,13 @@ esp_err_t imu_init(void)
         return ESP_ERR_NOT_FOUND;
     }
 
-    ESP_RETURN_ON_ERROR(imu_write_reg(QMI8658_REG_CTRL2, QMI8658_CTRL2_VAL), TAG, "CTRL2 failed");
-    ESP_RETURN_ON_ERROR(imu_write_reg(QMI8658_REG_CTRL7, QMI8658_CTRL7_VAL), TAG, "CTRL7 failed");
+    /* Same config as the vendor demo: CTRL8=0x80, accel ±4g/1000Hz,
+       gyro 64dps/896.8Hz, both enabled (6DOF — accel-only with a 6DOF
+       ODR code returns invalid data on this chip) */
+    ESP_RETURN_ON_ERROR(imu_write_reg(QMI8658_REG_CTRL8, 0x80), TAG, "CTRL8 failed");
+    ESP_RETURN_ON_ERROR(imu_write_reg(QMI8658_REG_CTRL2, 0x13), TAG, "CTRL2 failed");
+    ESP_RETURN_ON_ERROR(imu_write_reg(QMI8658_REG_CTRL3, 0x23), TAG, "CTRL3 failed");
+    ESP_RETURN_ON_ERROR(imu_write_reg(QMI8658_REG_CTRL7, 0x03), TAG, "CTRL7 failed");
 
     ESP_LOGI(TAG, "QMI8658 init complete (WHOAMI=0x%02X)", whoami);
     return ESP_OK;

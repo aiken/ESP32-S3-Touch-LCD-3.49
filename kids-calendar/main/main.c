@@ -24,6 +24,8 @@
 #include "usb_screenshot.h"
 #include "battery_bsp.h"
 #include "qmi8658_imu.h"
+#include "wifi_sync.h"
+#include "nvs_flash.h"
 #include <math.h>
 
 /* Demo courses for hardware GUI validation - use only characters in built-in font */
@@ -121,34 +123,47 @@ static void screenshot_refresh(void)
 }
 
 /* Poll the accelerometer and rotate the UI when the device orientation
-   changes. |ax| > |ay| means the long edge is horizontal (landscape).
+   changes. Four directions, gravity decides the dominant axis:
+     y > 0 -> ROTATION_90,  y < 0 -> ROTATION_270,
+     x > 0 -> ROTATION_0,   x < 0 -> ROTATION_180
+   (y>0 == landscape-90 verified on hardware; the x sign convention may
+   still need flipping after physical testing.)
    Debounce: switch only after 5 consecutive readings of the new direction. */
 #define ORIENT_DEBOUNCE_COUNT 5
 
+static const char *s_orient_names[] = {"0", "90", "180", "270"};
+
 static void imu_orientation_task(void *arg)
 {
-    bool landscape = false;      /* currently applied orientation */
-    bool candidate = false;
+    lv_display_rotation_t applied = LV_DISPLAY_ROTATION_0;
+    lv_display_rotation_t candidate = LV_DISPLAY_ROTATION_0;
     int stable = 0;
 
     for (;;) {
         float x = 0, y = 0, z = 0;
         if (imu_read_accel(&x, &y, &z) == ESP_OK) {
-            bool now_landscape = fabsf(x) > fabsf(y);
-            if (now_landscape == candidate) {
+            lv_display_rotation_t now;
+            if (fabsf(y) > fabsf(x)) {
+                now = (y > 0) ? LV_DISPLAY_ROTATION_90 : LV_DISPLAY_ROTATION_270;
+            } else {
+                now = (x > 0) ? LV_DISPLAY_ROTATION_0 : LV_DISPLAY_ROTATION_180;
+            }
+
+            if (now == candidate) {
                 if (stable < ORIENT_DEBOUNCE_COUNT) stable++;
             } else {
-                candidate = now_landscape;
+                candidate = now;
                 stable = 1;
             }
 
-            if (stable >= ORIENT_DEBOUNCE_COUNT && candidate != landscape) {
-                landscape = candidate;
+            if (stable >= ORIENT_DEBOUNCE_COUNT && candidate != applied) {
+                applied = candidate;
+                bool landscape = (applied == LV_DISPLAY_ROTATION_90 ||
+                                  applied == LV_DISPLAY_ROTATION_270);
                 ESP_LOGI(TAG, "Orientation -> %s (x=%.2f y=%.2f z=%.2f)",
-                         landscape ? "landscape" : "portrait", x, y, z);
+                         s_orient_names[applied], x, y, z);
                 if (example_lvgl_lock(-1)) {
-                    lv_display_set_rotation(s_disp, landscape ? LV_DISPLAY_ROTATION_90
-                                                              : LV_DISPLAY_ROTATION_0);
+                    lv_display_set_rotation(s_disp, applied);
                     ui_set_orientation(landscape);
                     /* Screenshot dims follow the logical resolution */
                     usb_screenshot_register_fb((uint16_t *)s_frame_buffer,
@@ -265,22 +280,13 @@ static void TouchInputReadCallback(lv_indev_t * indev, lv_indev_data_t *indevDat
     if (buff[1]>0 && buff[1]<5)
     {
         indevData->state = LV_INDEV_STATE_PRESSED;
-        /* Map raw panel coordinates according to the CURRENT display rotation */
-        lv_display_rotation_t rot = lv_display_get_rotation(lv_indev_get_display(indev));
-        if (rot == LV_DISPLAY_ROTATION_90 || rot == LV_DISPLAY_ROTATION_270)
-        {
-            if(pointX > EXAMPLE_LCD_H_RES) pointX = EXAMPLE_LCD_H_RES;
-            if(pointY > EXAMPLE_LCD_V_RES) pointY = EXAMPLE_LCD_V_RES;
-            indevData->point.x = (EXAMPLE_LCD_H_RES - pointX);
-            indevData->point.y = (EXAMPLE_LCD_V_RES - pointY);
-        }
-        else
-        {
-            if(pointX > EXAMPLE_LCD_V_RES) pointX = EXAMPLE_LCD_V_RES;
-            if(pointY > EXAMPLE_LCD_H_RES) pointY = EXAMPLE_LCD_H_RES;
-            indevData->point.x = pointY;
-            indevData->point.y = (EXAMPLE_LCD_V_RES-pointX);
-        }
+        /* Always report in the physical (portrait) frame — LVGL 9 rotates
+           indev points itself per lv_display_set_rotation()
+           (see lv_display_rotate_point in lv_indev.c). */
+        if(pointX > EXAMPLE_LCD_V_RES) pointX = EXAMPLE_LCD_V_RES;
+        if(pointY > EXAMPLE_LCD_H_RES) pointY = EXAMPLE_LCD_H_RES;
+        indevData->point.x = pointY;
+        indevData->point.y = (EXAMPLE_LCD_V_RES-pointX);
     }
     else 
     {
@@ -333,6 +339,16 @@ static void example_lvgl_port_task(void *arg)
 
 void app_main(void)
 {
+    /* NVS (required by the Wi-Fi driver) */
+    {
+        esp_err_t ret = nvs_flash_init();
+        if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+            ESP_ERROR_CHECK(nvs_flash_erase());
+            ret = nvs_flash_init();
+        }
+        ESP_ERROR_CHECK(ret);
+    }
+
     flush_done_semaphore = xSemaphoreCreateBinary();
     assert(flush_done_semaphore);
     touch_i2c_master_Init();
@@ -481,17 +497,28 @@ void app_main(void)
         ESP_LOGW(TAG, "IMU not found, auto-rotation disabled");
     }
 
-    /* Set RTC to current time on first boot (temporary: fixed time, will sync via NTP later) */
-    struct tm default_time = {
-        .tm_year = 126, /* 2026 - 1900 */
-        .tm_mon = 6,    /* July (0-based) */
-        .tm_mday = 20,
-        .tm_hour = 12,
-        .tm_min = 30,
-        .tm_sec = 0,
-        .tm_wday = 1,  /* Monday */
-    };
-    rtc_set_time(&default_time);
+    /* Set a default time only if the RTC lost its time (first boot or
+       battery change); NTP sync overwrites it once Wi-Fi is up. */
+    {
+        struct tm rtc_now = {0};
+        if (rtc_get_time(&rtc_now) != ESP_OK || rtc_now.tm_year < 126) {
+            struct tm default_time = {
+                .tm_year = 126, /* 2026 - 1900 */
+                .tm_mon = 6,    /* July (0-based) */
+                .tm_mday = 20,
+                .tm_hour = 12,
+                .tm_min = 30,
+                .tm_sec = 0,
+                .tm_wday = 1,  /* Monday */
+            };
+            rtc_set_time(&default_time);
+        }
+    }
+
+    /* Wi-Fi + NTP time sync (credentials via menuconfig) */
+    if (wifi_sync_init() == ESP_OK) {
+        wifi_sync_start_time_task();
+    }
 
     /* Main loop: update status bar only when minute changes to avoid flicker */
     int last_min = -1;
@@ -512,7 +539,7 @@ void app_main(void)
                 }
 
                 if (example_lvgl_lock(100)) {
-                    ui_update_statusbar(date_buf, weekday, time_buf, false);
+                    ui_update_statusbar(date_buf, weekday, time_buf, wifi_sync_is_connected());
                     ui_update_battery(battery_get_percent());
                     example_lvgl_unlock();
                 }

@@ -71,7 +71,8 @@ There are **no** `pyproject.toml`, `package.json`, or `Cargo.toml` files. All de
 | Display | AXS15231B over QSPI (SPI3_HOST, 40 MHz), driver `espressif/esp_lcd_axs15231b`; native 172×640, RGB565 |
 | Touch | AXS15231B built-in touch over raw I2C at address `0x3B` (GPIO17/18), polled 11-byte command sequence |
 | RTC | PCF85063 over I2C (GPIO47/48), `pcf85063_rtc` component |
-| IMU | QMI8658 accelerometer over I2C (same bus as RTC, addr 0x6B), `qmi8658_imu`; used for auto portrait/landscape switching |
+| IMU | QMI8658 accelerometer over I2C (same bus as RTC, addr 0x6B), `qmi8658_imu`; auto-rotates the UI across all **four** orientations (0/90/180/270, gravity on Y == landscape per on-hardware calibration) |
+| Wi-Fi | STA via `wifi_sync` (Kconfig credentials, ESP32-S3 is **2.4 GHz only** — a 5 GHz SSID will never be found); SNTP time sync → RTC, Beijing timezone |
 | Battery | Voltage via ADC1_CH3 (GPIO4), 3:1 divider, `battery_bsp`; percent shown in status bar |
 | Backlight | PWM on GPIO42 via `lcd_bl_pwm_bsp` |
 | Fonts | Montserrat 20 (clock) + custom `lv_font_chinese_14/16` (NotoSansSC, ASCII + UI-specific CJK glyphs, plain bitmap) for all other text; the built-in Source Han Sans CJK fonts are still enabled in Kconfig but unused by the UI (they lack several needed glyphs) |
@@ -106,7 +107,7 @@ The single source of truth for: QSPI LCD pins, display resolution (172×640), DM
 | `ui_calendar` | Used | All screens: status bar (incl. battery icon/percent), course timeline, month calendar, reminders, styles, CJK fonts, `ui_set_orientation()` for portrait/landscape rebuild, plus `ui_screenshot.c` |
 | `usb_screenshot` | Used | Dumps the RGB565 frame buffer over USB-Serial-JTAG (native USB, `/dev/tty.usbmodem*`) for AI-assisted visual debugging; **on-demand** — sends one frame when it receives the `screenshot` command; frame grab runs under the LVGL mutex + `lv_refr_now()` (no tearing) |
 | `screenshot_server` | Written, **not wired in** | HTTP server serving the frame buffer as BMP (`/screen`) for Wi-Fi-based screenshot debugging |
-| `wifi_sync` | **Stub** | Empty `include/` dir only; planned Wi-Fi/NTP/API course sync (Kconfig options already exist: `WIFI_SSID`, `API_HOST`, `NTP_SERVER`, `TIMEZONE_OFFSET`, ...) |
+| `wifi_sync` | Used | Wi-Fi STA + NTP time sync: connects with Kconfig credentials, SNTP → writes RTC (Beijing TZ, re-sync every 6 h), drives the status-bar WiFi indicator. Needs `nvs_flash_init()` before `esp_wifi_init` |
 
 The `course_t` data model (`id[32]`, `name[64]`, `day_of_week`, `start_time[8]`/`end_time[8]`, `teacher[32]`, `location[64]`, `color[8]`, `remind_before`) is defined in `ui_calendar/include/ui_calendar.h`; `main.c` currently feeds it hard-coded demo courses (`s_demo_courses[]`) with Chinese names — only characters covered by `lv_font_chinese_14/16` may be used. The fonts are generated with:
 
@@ -193,4 +194,6 @@ Manual only: `idf.py flash`. There is no OTA (the partition table has a single 8
 7. **Do NOT write the TCA9554** — the 01_ADC_Test (V1) pattern of pulling EXIO1 low as "battery measure enable" **kills the panel on this board** (black screen, app still alive). Battery voltage works with plain ADC1_CH3 reads, no expander involvement. `battery_bsp` deliberately does no TCA9554 I/O.
 8. **Backlight needs no driving on this board** — the vendor factory/demo programs never touch the backlight pin and the screen stays lit. Earlier "V2" pinout notes (BK=GPIO42 PWM, LCD_RST via TCA9554 EXIO5) were wrong here: `user_config.h` uses BK=GPIO8 (unused), LCD_RST=GPIO21 direct, plus a 300 ms pre-init delay for cold-boot panel readiness.
 9. **Panel wants big-endian RGB565** — keep `lv_draw_sw_rgb565_swap()` in the flush callback; removing it makes physical colors wrong (the demo-8 example without swap only *looks* acceptable at a glance). The screenshot receiver decodes big-endian to match.
-10. **Stub components** — `wifi_sync` (and `screenshot_server` integration) are unfinished; Kconfig options for Wi-Fi/API/NTP exist but nothing consumes them yet.
+10. **Stub components** — `screenshot_server` integration is unfinished; Kconfig options for the course API exist but nothing consumes them yet.
+11. **QMI8658 multi-byte reads need CTRL1 bit6 (ADDR_AI)** — without address auto-increment, reading the 6 accel bytes from 0x35 returns the same word 3 times (x == y == z garbage). Set CTRL1=0x40 after soft reset (SensorLib does this in `reset()`).
+12. **Wi-Fi needs `nvs_flash_init()` first** — calling `esp_wifi_init()` without NVS aborts with `wifi osi_nvs_open fail` (boot loop). Keep Wi-Fi failures non-fatal (graceful degrade, no `ESP_ERROR_CHECK` in the component).

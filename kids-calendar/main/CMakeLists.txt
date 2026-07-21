@@ -9,6 +9,8 @@ idf_component_register(
         usb_screenshot
         battery_bsp
         qmi8658_imu
+        wifi_sync
+        nvs_flash
         driver
         esp_lcd
         espressif__esp_lcd_axs15231b

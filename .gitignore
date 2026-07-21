@@ -2,6 +2,6 @@
 .codegraph/
 **/build/
 **/managed_components/
+**/sdkconfig
 **/sdkconfig.old
-Examples/**/sdkconfig
 kimi-export-*.md

@@ -22,7 +22,7 @@ static const char *TAG = "RTC";
 #define RTC_PIN_SCL   48
 #define RTC_ADDR      0x51
 #define RTC_I2C_PORT  I2C_NUM_0
-#define RTC_I2C_FREQ  400000
+#define RTC_I2C_FREQ  300000
 
 /* PCF85063 registers */
 #define RTC_REG_CTRL1    0x00
