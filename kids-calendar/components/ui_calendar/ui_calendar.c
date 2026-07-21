@@ -87,6 +87,27 @@ esp_err_t ui_init(void)
     return ESP_OK;
 }
 
+static void ui_layout_status_bar(void)
+{
+    if (!s_landscape) {
+        /* Portrait (172x640): top row date+weekday+clock, bottom row batt+wifi */
+        lv_obj_align(s_date_label, LV_ALIGN_LEFT_MID, 4, -8);
+        lv_obj_align_to(s_weekday_label, s_date_label, LV_ALIGN_OUT_RIGHT_MID, 8, 0);
+        lv_obj_align(s_time_label, LV_ALIGN_RIGHT_MID, -4, -8);
+        lv_obj_align(s_wifi_label, LV_ALIGN_BOTTOM_RIGHT, -4, 0);
+        lv_obj_align(s_batt_icon_label, LV_ALIGN_BOTTOM_LEFT, 4, 0);
+        lv_obj_align_to(s_batt_pct_label, s_batt_icon_label, LV_ALIGN_OUT_RIGHT_MID, 2, 0);
+    } else {
+        /* Landscape (640x172): single row, battery + wifi left of the clock */
+        lv_obj_align(s_date_label, LV_ALIGN_LEFT_MID, 4, 0);
+        lv_obj_align_to(s_weekday_label, s_date_label, LV_ALIGN_OUT_RIGHT_MID, 16, 0);
+        lv_obj_align(s_time_label, LV_ALIGN_RIGHT_MID, -4, 0);
+        lv_obj_align_to(s_wifi_label, s_time_label, LV_ALIGN_OUT_LEFT_MID, -14, 0);
+        lv_obj_align_to(s_batt_pct_label, s_wifi_label, LV_ALIGN_OUT_LEFT_MID, -12, 0);
+        lv_obj_align_to(s_batt_icon_label, s_batt_pct_label, LV_ALIGN_OUT_LEFT_MID, -3, 0);
+    }
+}
+
 static void ui_create_status_bar(void)
 {
     s_status_bar = lv_obj_create(s_root);
@@ -121,23 +142,7 @@ static void ui_create_status_bar(void)
     ui_style_label(s_batt_pct_label, font_small, lv_color_hex(0xAAAAAA));
     lv_label_set_text(s_batt_pct_label, "--%");
 
-    if (!s_landscape) {
-        /* Portrait (172x640): two rows */
-        lv_obj_align(s_date_label, LV_ALIGN_LEFT_MID, 4, -4);
-        lv_obj_align(s_weekday_label, LV_ALIGN_CENTER, 0, -4);
-        lv_obj_align(s_time_label, LV_ALIGN_RIGHT_MID, -4, -4);
-        lv_obj_align(s_wifi_label, LV_ALIGN_BOTTOM_RIGHT, -4, 0);
-        lv_obj_align(s_batt_icon_label, LV_ALIGN_BOTTOM_LEFT, 4, 0);
-        lv_obj_align_to(s_batt_pct_label, s_batt_icon_label, LV_ALIGN_OUT_RIGHT_MID, 2, 0);
-    } else {
-        /* Landscape (640x172): single row, battery + wifi left of the clock */
-        lv_obj_align(s_date_label, LV_ALIGN_LEFT_MID, 4, 0);
-        lv_obj_align_to(s_weekday_label, s_date_label, LV_ALIGN_OUT_RIGHT_MID, 16, 0);
-        lv_obj_align(s_time_label, LV_ALIGN_RIGHT_MID, -4, 0);
-        lv_obj_align_to(s_wifi_label, s_time_label, LV_ALIGN_OUT_LEFT_MID, -10, 0);
-        lv_obj_align_to(s_batt_pct_label, s_wifi_label, LV_ALIGN_OUT_LEFT_MID, -6, 0);
-        lv_obj_align_to(s_batt_icon_label, s_batt_pct_label, LV_ALIGN_OUT_LEFT_MID, -2, 0);
-    }
+    ui_layout_status_bar();
 }
 
 static void ui_create_timeline(void)
@@ -264,10 +269,13 @@ void ui_update_statusbar(const char *date, const char *weekday,
     s_last_wifi = wifi_ok;
 
     if (s_wifi_label) {
-        lv_label_set_text(s_wifi_label, wifi_ok ? "WiFi" : "---");
+        lv_label_set_text(s_wifi_label, "WiFi");
         lv_obj_set_style_text_color(s_wifi_label,
-                                    wifi_ok ? lv_color_hex(0x4ECDC4) : lv_color_hex(0x888888), 0);
+                                    wifi_ok ? lv_color_hex(0x4ECDC4) : lv_color_hex(0x555566), 0);
     }
+
+    /* Label widths changed with content — redo the right-side alignment */
+    ui_layout_status_bar();
 }
 
 void ui_set_current_time(int hour, int minute)
