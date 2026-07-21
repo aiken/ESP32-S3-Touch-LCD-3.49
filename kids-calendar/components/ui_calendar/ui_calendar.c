@@ -206,11 +206,11 @@ static void ui_create_status_bar(void)
     lv_obj_add_event_cb(s_status_bar, ui_on_status_bar_click, LV_EVENT_CLICKED, NULL);
 
     s_date_label = lv_label_create(s_status_bar);
-    ui_style_label(s_date_label, font_normal, lv_color_white());
+    ui_style_label(s_date_label, &lv_font_montserrat_16, lv_color_white());
     lv_label_set_text(s_date_label, "--/--");
 
     s_weekday_label = lv_label_create(s_status_bar);
-    ui_style_label(s_weekday_label, font_normal, lv_color_hex(0x4ECDC4));
+    ui_style_label(s_weekday_label, &lv_font_montserrat_16, lv_color_hex(0x4ECDC4));
     lv_label_set_text(s_weekday_label, "--");
 
     s_time_label = lv_label_create(s_status_bar);

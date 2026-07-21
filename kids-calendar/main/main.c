@@ -311,6 +311,8 @@ static void TouchInputReadCallback(lv_indev_t * indev, lv_indev_data_t *indevDat
         if(pointY > EXAMPLE_LCD_H_RES) pointY = EXAMPLE_LCD_H_RES;
         indevData->point.x = pointY;
         indevData->point.y = (EXAMPLE_LCD_V_RES-pointX);
+        ESP_LOGI("TOUCH", "press x=%d y=%d t=%u", indevData->point.x, indevData->point.y,
+                 (unsigned)(xTaskGetTickCount() * portTICK_PERIOD_MS));
     }
     else 
     {
